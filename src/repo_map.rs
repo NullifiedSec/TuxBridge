@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, BTreeSet}, fs, path::{Path, PathBuf}, process::Command};
+use std::{collections::{BTreeMap, BTreeSet}, fs, path::Path, process::Command};
 
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ pub async fn repository_map(State(state):State<AppState>,Json(req):Json<RepoMapR
     let (project_kinds,manifests)=detect_manifests(&root);
     let changed_files=if ws.capabilities.git_read{git_changed(&root)}else{Vec::new()};
     let response=RepoMapResponse{workspace:req.workspace,root:root.display().to_string(),project_kinds,manifests,language_files:acc.languages,source_roots:acc.source_roots.into_iter().collect(),test_roots:acc.test_roots.into_iter().collect(),config_files:acc.configs.into_iter().take(MAX_SAMPLE).collect(),important_files:acc.important.into_iter().take(MAX_SAMPLE).collect(),changed_files,sampled_source_files:acc.samples.into_iter().take(MAX_SAMPLE).collect(),files_scanned:acc.files,truncated:acc.truncated};
-    state.events.emit("code.repo_map",Some(&response.workspace),format!("mapped {} files",response.files_scanned),serde_json::json!({"files_scanned":response.files_scanned,"project_kinds":response.project_kinds})).await;
+    state.events.emit("code.repo_map",Some(&response.workspace),format!("mapped {} files",response.files_scanned),serde_json::json!({"files_scanned":response.files_scanned,"project_kinds":response.project_kinds.clone()})).await;
     Ok(Json(response))
 }
 
