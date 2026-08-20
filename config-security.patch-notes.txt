@@ -1,0 +1,1 @@
+Temporary migration note: security.profile and security.default_command_allowlist are now required by the runtime wiring and installer. This file will be removed after config/openapi/docs are synchronized.
