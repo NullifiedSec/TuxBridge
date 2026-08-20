@@ -38,7 +38,7 @@ impl ApprovalStore {
 }
 
 pub async fn list_approvals(State(state):State<AppState>)->Json<Vec<ApprovalRecord>>{Json(state.approvals.list().await)}
-pub async fn approve(State(state):State<AppState>,AxumPath(id):AxumPath<String>)->Result<Json<ApprovalRecord>,ApiError>{let r=state.approvals.set(&id,ApprovalStatus::Approved).await?;state.events.emit("approval.approved",None,format!("approved {}",r.path),serde_json::json!({"approval_id":r.id,"path":r.path})).await;Ok(Json(r))}
-pub async fn deny(State(state):State<AppState>,AxumPath(id):AxumPath<String>)->Result<Json<ApprovalRecord>,ApiError>{let r=state.approvals.set(&id,ApprovalStatus::Denied).await?;state.events.emit("approval.denied",None,format!("denied {}",r.path),serde_json::json!({"approval_id":r.id,"path":r.path})).await;Ok(Json(r))}
+pub async fn approve(State(state):State<AppState>,AxumPath(id):AxumPath<String>)->Result<Json<ApprovalRecord>,ApiError>{let r=state.approvals.set(&id,ApprovalStatus::Approved).await?;state.events.emit("approval.approved",None,format!("approved {}",r.path),serde_json::json!({"approval_id":r.id.clone(),"path":r.path.clone()})).await;Ok(Json(r))}
+pub async fn deny(State(state):State<AppState>,AxumPath(id):AxumPath<String>)->Result<Json<ApprovalRecord>,ApiError>{let r=state.approvals.set(&id,ApprovalStatus::Denied).await?;state.events.emit("approval.denied",None,format!("denied {}",r.path),serde_json::json!({"approval_id":r.id.clone(),"path":r.path.clone()})).await;Ok(Json(r))}
 
 fn now_ms()->u128{SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()}
