@@ -1,7 +1,9 @@
 use std::{env, net::SocketAddr, path::PathBuf};
 
 use axum::{
-    Json, Router, middleware,
+    Json, Router,
+    extract::DefaultBodyLimit,
+    middleware,
     routing::{get, post},
 };
 use serde::Serialize;
@@ -15,10 +17,12 @@ mod error;
 mod fs;
 mod git;
 mod git_mutation;
+mod hardening;
 mod mutation;
 mod project;
 mod state;
 mod system;
+mod user_files;
 mod workspace;
 
 use config::Config;
@@ -47,6 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::load(&config_path)?;
     let listen: SocketAddr = config.server.listen.parse()?;
+    let max_body_bytes = config.limits.max_body_bytes;
     let state = AppState::new(config)?;
 
     let protected = Router::new()
@@ -54,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/doctor", get(doctor::doctor))
         .route("/v1/workspaces", get(workspace::list_workspaces))
         .route("/v1/workspaces/{name}", get(workspace::get_workspace))
+        .route("/v1/workspaces/resolve", post(workspace::resolve_path))
         .route("/v1/fs/list", post(fs::list_directory))
         .route("/v1/fs/stat", post(fs::stat_path))
         .route("/v1/fs/read", post(fs::read_file))
@@ -62,6 +68,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/fs/hash", post(mutation::hash_file))
         .route("/v1/fs/write", post(mutation::write_file))
         .route("/v1/fs/patch", post(mutation::patch_file))
+        .route("/v1/user-files", get(user_files::list_mounts))
+        .route("/v1/user-files/list", post(user_files::list_directory))
+        .route("/v1/user-files/stat", post(user_files::stat_path))
+        .route("/v1/user-files/read", post(user_files::read_file))
+        .route("/v1/user-files/hash", post(user_files::hash_file))
+        .route("/v1/user-files/write", post(user_files::write_file))
+        .route("/v1/user-files/patch", post(user_files::patch_file))
         .route("/v1/project/inspect", post(project::inspect_project))
         .route("/v1/commands/run", post(command::run_command))
         .route("/v1/commands/start", post(command::start_command))
@@ -86,6 +99,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(health))
         .merge(protected)
+        .layer(DefaultBodyLimit::max(max_body_bytes))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            hardening::protect_host,
+        ))
         .with_state(state);
 
     let listener = TcpListener::bind(listen).await?;

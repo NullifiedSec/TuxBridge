@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, env, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +13,11 @@ pub struct Config {
     #[serde(default)]
     pub auth: AuthConfig,
     #[serde(default)]
+    pub limits: LimitsConfig,
+    #[serde(default)]
     pub workspaces: BTreeMap<String, WorkspaceConfig>,
+    #[serde(default)]
+    pub user_files: BTreeMap<String, UserFilesConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -41,6 +49,38 @@ impl Default for AuthConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LimitsConfig {
+    #[serde(default = "default_max_body_bytes")]
+    pub max_body_bytes: usize,
+    #[serde(default = "default_max_in_flight")]
+    pub max_in_flight: usize,
+    #[serde(default = "default_command_timeout")]
+    pub command_timeout_seconds: u64,
+    #[serde(default = "default_max_command_timeout")]
+    pub max_command_timeout_seconds: u64,
+    #[serde(default = "default_command_output_bytes")]
+    pub command_output_bytes: usize,
+    #[serde(default = "default_max_jobs")]
+    pub max_jobs: usize,
+    #[serde(default = "default_job_retention_seconds")]
+    pub job_retention_seconds: u64,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_body_bytes: default_max_body_bytes(),
+            max_in_flight: default_max_in_flight(),
+            command_timeout_seconds: default_command_timeout(),
+            max_command_timeout_seconds: default_max_command_timeout(),
+            command_output_bytes: default_command_output_bytes(),
+            max_jobs: default_max_jobs(),
+            job_retention_seconds: default_job_retention_seconds(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorkspaceConfig {
     pub root: PathBuf,
     #[serde(default)]
@@ -63,6 +103,15 @@ pub struct Capabilities {
     pub git_network: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UserFilesConfig {
+    pub root: PathBuf,
+    #[serde(default)]
+    pub read: bool,
+    #[serde(default)]
+    pub write: bool,
+}
+
 impl Config {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let raw = fs::read_to_string(path).map_err(|source| ConfigError::Read {
@@ -77,8 +126,11 @@ impl Config {
     pub fn api_key(&self) -> Result<String, ConfigError> {
         let value = env::var(&self.auth.api_key_env)
             .map_err(|_| ConfigError::MissingSecret(self.auth.api_key_env.clone()))?;
-        if value.trim().is_empty() {
-            return Err(ConfigError::MissingSecret(self.auth.api_key_env.clone()));
+        if value.len() < 32 || value.trim() != value || value.chars().any(char::is_control) {
+            return Err(ConfigError::Invalid(format!(
+                "API key from {} must be at least 32 characters and contain no surrounding whitespace or control characters",
+                self.auth.api_key_env
+            )));
         }
         Ok(value)
     }
@@ -87,29 +139,77 @@ impl Config {
         if self.server.listen.trim().is_empty() {
             return Err(ConfigError::Invalid("server.listen must not be empty".into()));
         }
-
-        for (name, workspace) in &self.workspaces {
-            if name.trim().is_empty() {
-                return Err(ConfigError::Invalid("workspace names must not be empty".into()));
-            }
-            if !workspace.root.is_absolute() {
-                return Err(ConfigError::Invalid(format!(
-                    "workspace {name:?} root must be an absolute path"
-                )));
-            }
+        if self.auth.api_key_env.trim().is_empty() {
+            return Err(ConfigError::Invalid("auth.api_key_env must not be empty".into()));
         }
+        if self.limits.max_body_bytes < 1024 || self.limits.max_body_bytes > 64 * 1024 * 1024 {
+            return Err(ConfigError::Invalid(
+                "limits.max_body_bytes must be between 1024 and 67108864".into(),
+            ));
+        }
+        if self.limits.max_in_flight == 0 || self.limits.max_in_flight > 1024 {
+            return Err(ConfigError::Invalid(
+                "limits.max_in_flight must be between 1 and 1024".into(),
+            ));
+        }
+        if self.limits.command_timeout_seconds == 0
+            || self.limits.max_command_timeout_seconds == 0
+            || self.limits.command_timeout_seconds > self.limits.max_command_timeout_seconds
+            || self.limits.max_command_timeout_seconds > 3600
+        {
+            return Err(ConfigError::Invalid(
+                "command timeout limits are invalid or exceed one hour".into(),
+            ));
+        }
+        if self.limits.command_output_bytes == 0
+            || self.limits.command_output_bytes > 16 * 1024 * 1024
+        {
+            return Err(ConfigError::Invalid(
+                "limits.command_output_bytes must be between 1 and 16777216".into(),
+            ));
+        }
+        if self.limits.max_jobs == 0 || self.limits.max_jobs > 4096 {
+            return Err(ConfigError::Invalid(
+                "limits.max_jobs must be between 1 and 4096".into(),
+            ));
+        }
+
+        validate_roots("workspace", self.workspaces.iter().map(|(name, cfg)| (name, &cfg.root)))?;
+        validate_roots(
+            "user-files mount",
+            self.user_files.iter().map(|(name, cfg)| (name, &cfg.root)),
+        )?;
 
         Ok(())
     }
 }
 
-fn default_listen() -> String {
-    "127.0.0.1:8787".into()
+fn validate_roots<'a>(
+    kind: &str,
+    roots: impl Iterator<Item = (&'a String, &'a PathBuf)>,
+) -> Result<(), ConfigError> {
+    for (name, root) in roots {
+        if name.trim().is_empty() {
+            return Err(ConfigError::Invalid(format!("{kind} names must not be empty")));
+        }
+        if !root.is_absolute() {
+            return Err(ConfigError::Invalid(format!(
+                "{kind} {name:?} root must be an absolute path"
+            )));
+        }
+    }
+    Ok(())
 }
 
-fn default_api_key_env() -> String {
-    "TUXBRIDGE_API_KEY".into()
-}
+fn default_listen() -> String { "127.0.0.1:8787".into() }
+fn default_api_key_env() -> String { "TUXBRIDGE_API_KEY".into() }
+fn default_max_body_bytes() -> usize { 10 * 1024 * 1024 }
+fn default_max_in_flight() -> usize { 32 }
+fn default_command_timeout() -> u64 { 120 }
+fn default_max_command_timeout() -> u64 { 900 }
+fn default_command_output_bytes() -> usize { 2 * 1024 * 1024 }
+fn default_max_jobs() -> usize { 128 }
+fn default_job_retention_seconds() -> u64 { 3600 }
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -124,7 +224,7 @@ impl std::fmt::Display for ConfigError {
         match self {
             Self::Read { path, source } => write!(f, "failed to read {}: {source}", path.display()),
             Self::Parse(source) => write!(f, "failed to parse configuration: {source}"),
-            Self::MissingSecret(name) => write!(f, "required API key environment variable {name} is missing or empty"),
+            Self::MissingSecret(name) => write!(f, "required API key environment variable {name} is missing"),
             Self::Invalid(message) => write!(f, "invalid configuration: {message}"),
         }
     }
@@ -149,18 +249,17 @@ mod tests {
     fn rejects_relative_workspace_root() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "[workspaces.demo]\nroot = \"relative/path\"").unwrap();
-
         let err = Config::load(file.path()).unwrap_err();
         assert!(err.to_string().contains("absolute path"));
     }
 
     #[test]
-    fn applies_server_and_auth_defaults() {
+    fn applies_defaults() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "[workspaces.demo]\nroot = \"/tmp\"").unwrap();
-
         let config = Config::load(file.path()).unwrap();
         assert_eq!(config.server.listen, "127.0.0.1:8787");
         assert_eq!(config.auth.api_key_env, "TUXBRIDGE_API_KEY");
+        assert_eq!(config.limits.max_in_flight, 32);
     }
 }

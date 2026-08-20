@@ -1,4 +1,7 @@
-use std::{fs, path::{Component, Path}};
+use std::{
+    fs,
+    path::{Component, Path},
+};
 
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
@@ -54,6 +57,7 @@ pub async fn git_pull(
     let workspace = require_workspace(&state, &request.workspace, true, true)?;
     let root = canonical_root(workspace)?;
     ensure_git_repo(&root).await?;
+    ensure_clean_worktree(&root).await?;
     run_git(&root, &["pull", "--ff-only"]).await.map(Json)
 }
 
@@ -63,6 +67,9 @@ pub async fn git_add(
 ) -> Result<Json<GitMutationResponse>, ApiError> {
     if request.paths.is_empty() {
         return Err(ApiError::BadRequest("paths must not be empty".into()));
+    }
+    if request.paths.len() > 1024 {
+        return Err(ApiError::BadRequest("too many Git paths".into()));
     }
     for path in &request.paths {
         validate_repo_path(path)?;
@@ -105,6 +112,7 @@ pub async fn git_push(
     let root = canonical_root(workspace)?;
     ensure_git_repo(&root).await?;
     validate_branch(&root, &request.branch).await?;
+    ensure_remote_exists(&root, &request.remote).await?;
 
     let refspec = format!("{}:refs/heads/{}", request.branch, request.branch);
     run_git(
@@ -153,14 +161,36 @@ async fn ensure_git_repo(root: &Path) -> Result<(), ApiError> {
     }
 }
 
+async fn ensure_clean_worktree(root: &Path) -> Result<(), ApiError> {
+    let result = run_git_raw(root, &["status", "--porcelain=v1"]).await?;
+    if result.stdout.is_empty() {
+        Ok(())
+    } else {
+        Err(ApiError::Conflict(
+            "git pull requires a clean working tree; commit or otherwise resolve local changes first".into(),
+        ))
+    }
+}
+
 async fn validate_branch(root: &Path, branch: &str) -> Result<(), ApiError> {
     if branch.trim().is_empty() || branch.starts_with('-') {
         return Err(ApiError::BadRequest("invalid branch name".into()));
     }
     run_git_raw(root, &["check-ref-format", "--branch", branch])
         .await
+        .map_err(|_| ApiError::BadRequest("invalid branch name".into()))?;
+    let reference = format!("refs/heads/{branch}");
+    run_git_raw(root, &["show-ref", "--verify", "--quiet", &reference])
+        .await
+        .map_err(|_| ApiError::BadRequest("local branch does not exist".into()))?;
+    Ok(())
+}
+
+async fn ensure_remote_exists(root: &Path, remote: &str) -> Result<(), ApiError> {
+    run_git_raw(root, &["remote", "get-url", remote])
+        .await
         .map(|_| ())
-        .map_err(|_| ApiError::BadRequest("invalid branch name".into()))
+        .map_err(|_| ApiError::BadRequest(format!("Git remote {remote:?} does not exist")))
 }
 
 fn validate_remote(remote: &str) -> Result<(), ApiError> {
@@ -205,6 +235,11 @@ async fn run_git(root: &Path, args: &[&str]) -> Result<GitMutationResponse, ApiE
 
 async fn run_git_raw(root: &Path, args: &[&str]) -> Result<std::process::Output, ApiError> {
     let output = Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .arg("-c")
+        .arg("core.hooksPath=/dev/null")
+        .arg("-c")
+        .arg("core.fsmonitor=false")
         .arg("-C")
         .arg(root)
         .args(args)

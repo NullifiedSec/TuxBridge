@@ -22,14 +22,23 @@ use tokio::{
 
 use crate::{config::WorkspaceConfig, error::ApiError, state::AppState};
 
-const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
-const MAX_TIMEOUT_SECONDS: u64 = 900;
-const MAX_OUTPUT_BYTES: usize = 2_097_152;
-
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct JobStore {
     jobs: Arc<Mutex<HashMap<String, JobRecord>>>,
     next_id: Arc<AtomicU64>,
+    max_jobs: usize,
+    retention_seconds: u64,
+}
+
+impl JobStore {
+    pub fn new(max_jobs: usize, retention_seconds: u64) -> Self {
+        Self {
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(AtomicU64::new(0)),
+            max_jobs,
+            retention_seconds,
+        }
+    }
 }
 
 struct JobRecord {
@@ -87,12 +96,15 @@ pub async fn run_command(
 ) -> Result<Json<CommandResult>, ApiError> {
     let workspace = command_workspace(&state, &request.workspace)?;
     validate_argv(&request.argv)?;
-    let timeout = request
-        .timeout_seconds
-        .unwrap_or(DEFAULT_TIMEOUT_SECONDS)
-        .clamp(1, MAX_TIMEOUT_SECONDS);
+    let timeout = command_timeout(&state, request.timeout_seconds);
     let root = canonical_root(workspace)?;
-    let result = execute(&root, request.argv, timeout).await?;
+    let result = execute(
+        &root,
+        request.argv,
+        timeout,
+        state.config.limits.command_output_bytes,
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -102,10 +114,8 @@ pub async fn start_command(
 ) -> Result<Json<JobSnapshot>, ApiError> {
     let workspace = command_workspace(&state, &request.workspace)?;
     validate_argv(&request.argv)?;
-    let timeout = request
-        .timeout_seconds
-        .unwrap_or(DEFAULT_TIMEOUT_SECONDS)
-        .clamp(1, MAX_TIMEOUT_SECONDS);
+    let timeout = command_timeout(&state, request.timeout_seconds);
+    let output_limit = state.config.limits.command_output_bytes;
     let root = canonical_root(workspace)?;
 
     let id = state.jobs.next_id();
@@ -134,12 +144,12 @@ pub async fn start_command(
                 cancel: Some(cancel_tx),
             },
         )
-        .await;
+        .await?;
 
     let jobs = state.jobs.clone();
     let argv = request.argv;
     tokio::spawn(async move {
-        let completion = execute_inner(&root, argv, timeout, Some(cancel_rx)).await;
+        let completion = execute_inner(&root, argv, timeout, output_limit, Some(cancel_rx)).await;
         jobs.finish(&id, completion).await;
     });
 
@@ -171,20 +181,28 @@ impl JobStore {
         format!("job-{value:016x}")
     }
 
-    async fn insert(&self, id: String, record: JobRecord) {
-        self.jobs.lock().await.insert(id, record);
+    async fn insert(&self, id: String, record: JobRecord) -> Result<(), ApiError> {
+        let mut jobs = self.jobs.lock().await;
+        self.prune_locked(&mut jobs);
+        if jobs.len() >= self.max_jobs {
+            return Err(ApiError::Conflict(format!(
+                "background job limit of {} has been reached",
+                self.max_jobs
+            )));
+        }
+        jobs.insert(id, record);
+        Ok(())
     }
 
     async fn get(&self, id: &str) -> Option<JobSnapshot> {
-        self.jobs
-            .lock()
-            .await
-            .get(id)
-            .map(|record| record.snapshot.clone())
+        let mut jobs = self.jobs.lock().await;
+        self.prune_locked(&mut jobs);
+        jobs.get(id).map(|record| record.snapshot.clone())
     }
 
     async fn cancel(&self, id: &str) -> Result<JobSnapshot, ApiError> {
         let mut jobs = self.jobs.lock().await;
+        self.prune_locked(&mut jobs);
         let record = jobs
             .get_mut(id)
             .ok_or_else(|| ApiError::NotFound(format!("job {id:?} was not found")))?;
@@ -240,6 +258,17 @@ impl JobStore {
             }
         }
     }
+
+    fn prune_locked(&self, jobs: &mut HashMap<String, JobRecord>) {
+        if self.retention_seconds == 0 {
+            return;
+        }
+        let cutoff = unix_now().saturating_sub(self.retention_seconds);
+        jobs.retain(|_, record| {
+            matches!(record.snapshot.status, JobStatus::Running)
+                || record.snapshot.finished_at_unix.is_none_or(|finished| finished >= cutoff)
+        });
+    }
 }
 
 #[derive(Debug)]
@@ -253,12 +282,19 @@ enum ExecuteError {
     Failed(String),
 }
 
+fn command_timeout(state: &AppState, requested: Option<u64>) -> u64 {
+    requested
+        .unwrap_or(state.config.limits.command_timeout_seconds)
+        .clamp(1, state.config.limits.max_command_timeout_seconds)
+}
+
 async fn execute(
     root: &std::path::Path,
     argv: Vec<String>,
     timeout_seconds: u64,
+    output_limit: usize,
 ) -> Result<CommandResult, ApiError> {
-    execute_inner(root, argv, timeout_seconds, None)
+    execute_inner(root, argv, timeout_seconds, output_limit, None)
         .await
         .map_err(|error| match error {
             ExecuteError::Cancelled { .. } => ApiError::Conflict("command was cancelled".into()),
@@ -270,6 +306,7 @@ async fn execute_inner(
     root: &std::path::Path,
     argv: Vec<String>,
     timeout_seconds: u64,
+    output_limit: usize,
     cancel: Option<oneshot::Receiver<()>>,
 ) -> Result<CommandResult, ExecuteError> {
     let mut command = Command::new(&argv[0]);
@@ -292,8 +329,8 @@ async fn execute_inner(
         .stderr
         .take()
         .ok_or_else(|| ExecuteError::Failed("failed to capture stderr".into()))?;
-    let stdout_task = tokio::spawn(drain_limited(stdout));
-    let stderr_task = tokio::spawn(drain_limited(stderr));
+    let stdout_task = tokio::spawn(drain_limited(stdout, output_limit));
+    let stderr_task = tokio::spawn(drain_limited(stderr, output_limit));
 
     enum EndState {
         Exited(std::process::ExitStatus),
@@ -358,7 +395,7 @@ async fn execute_inner(
     }
 }
 
-async fn drain_limited<R>(mut reader: R) -> std::io::Result<(Vec<u8>, bool)>
+async fn drain_limited<R>(mut reader: R, limit: usize) -> std::io::Result<(Vec<u8>, bool)>
 where
     R: AsyncRead + Unpin,
 {
@@ -371,8 +408,8 @@ where
         if read == 0 {
             break;
         }
-        if output.len() < MAX_OUTPUT_BYTES {
-            let remaining = MAX_OUTPUT_BYTES - output.len();
+        if output.len() < limit {
+            let remaining = limit - output.len();
             output.extend_from_slice(&buffer[..read.min(remaining)]);
             if read > remaining {
                 truncated = true;

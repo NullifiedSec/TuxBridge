@@ -30,14 +30,11 @@ pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
     let mut checks = Vec::new();
 
     for tool in ["git", "rustc", "cargo", "node", "npm", "bun"] {
+        let available = command_exists(tool);
         checks.push(DoctorCheck {
             name: format!("tool:{tool}"),
-            status: if command_exists(tool) {
-                CheckStatus::Ok
-            } else {
-                CheckStatus::Warning
-            },
-            message: if command_exists(tool) {
+            status: if available { CheckStatus::Ok } else { CheckStatus::Warning },
+            message: if available {
                 format!("{tool} is available")
             } else {
                 format!("{tool} is not available on PATH")
@@ -59,6 +56,21 @@ pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
         });
     }
 
+    checks.push(DoctorCheck {
+        name: "limits".into(),
+        status: CheckStatus::Ok,
+        message: format!(
+            "body={}B in_flight={} command_timeout={}..{}s command_output={}B jobs={} retention={}s",
+            state.config.limits.max_body_bytes,
+            state.config.limits.max_in_flight,
+            state.config.limits.command_timeout_seconds,
+            state.config.limits.max_command_timeout_seconds,
+            state.config.limits.command_output_bytes,
+            state.config.limits.max_jobs,
+            state.config.limits.job_retention_seconds,
+        ),
+    });
+
     for (name, workspace) in &state.config.workspaces {
         match fs::canonicalize(&workspace.root) {
             Ok(root) if root.is_dir() => {
@@ -74,6 +86,13 @@ pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
                 {
                     checks.push(check_git_workspace(name, &root));
                 }
+                if workspace.capabilities.git_write || workspace.capabilities.git_network {
+                    checks.push(DoctorCheck {
+                        name: format!("workspace:{name}:git-execution-risk"),
+                        status: CheckStatus::Warning,
+                        message: "Git write/network operations may invoke repository filters, credential helpers, SSH, or remote helpers; expose only trusted repositories to the service user".into(),
+                    });
+                }
             }
             Ok(root) => checks.push(DoctorCheck {
                 name: format!("workspace:{name}"),
@@ -84,6 +103,29 @@ pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
                 name: format!("workspace:{name}"),
                 status: CheckStatus::Error,
                 message: format!("workspace root is not accessible: {error}"),
+            }),
+        }
+    }
+
+    for (name, mount) in &state.config.user_files {
+        match fs::canonicalize(&mount.root) {
+            Ok(root) if root.is_dir() => checks.push(DoctorCheck {
+                name: format!("user-files:{name}"),
+                status: CheckStatus::Ok,
+                message: format!(
+                    "{} is accessible (read={}, write={})",
+                    root.display(), mount.read, mount.write
+                ),
+            }),
+            Ok(root) => checks.push(DoctorCheck {
+                name: format!("user-files:{name}"),
+                status: CheckStatus::Error,
+                message: format!("{} is not a directory", root.display()),
+            }),
+            Err(error) => checks.push(DoctorCheck {
+                name: format!("user-files:{name}"),
+                status: CheckStatus::Error,
+                message: format!("mount root is not accessible: {error}"),
             }),
         }
     }

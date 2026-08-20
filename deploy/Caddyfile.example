@@ -1,0 +1,18 @@
+tuxbridge.example.com {
+    encode zstd gzip
+
+    # TuxBridge itself listens only on loopback.
+    reverse_proxy 127.0.0.1:8787
+
+    # Keep request size bounded at the edge too. Match this to limits.max_body_bytes.
+    request_body {
+        max_size 10MB
+    }
+
+    header {
+        -Server
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+    }
+}

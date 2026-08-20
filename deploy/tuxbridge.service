@@ -1,0 +1,43 @@
+[Unit]
+Description=TuxBridge ChatGPT host bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tuxbridge
+Group=tuxbridge
+ExecStart=/usr/local/bin/tuxbridge
+EnvironmentFile=/etc/tuxbridge/tuxbridge.env
+Environment=TUXBRIDGE_CONFIG=/etc/tuxbridge/tuxbridge.toml
+WorkingDirectory=/var/lib/tuxbridge
+Restart=on-failure
+RestartSec=3
+
+# Baseline hardening. ReadWritePaths must be adjusted to match configured writable roots.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+UMask=0077
+
+# Keep the service writable state explicit. Add workspace/user-files roots that need writes.
+ReadWritePaths=/var/lib/tuxbridge
+
+# TuxBridge needs networking only when Git network or executed commands need it.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
