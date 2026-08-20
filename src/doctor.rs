@@ -29,7 +29,7 @@ pub enum CheckStatus {
 pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
     let mut checks = Vec::new();
 
-    for tool in ["git", "rustc", "cargo", "node", "npm", "bun"] {
+    for tool in ["git", "rustc", "cargo", "node", "npm", "bun", "ss", "df"] {
         let available = command_exists(tool);
         checks.push(DoctorCheck {
             name: format!("tool:{tool}"),
