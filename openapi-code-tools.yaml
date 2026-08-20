@@ -24,7 +24,7 @@ paths:
     post:
       operationId: getCodeSymbols
       summary: Get a lightweight declaration outline for a source file.
-      description: Heuristic editor navigation aid, not compiler or LSP truth.
+      description: Heuristic editor navigation aid, not compiler or LSP truth. Prefer Tree-sitter or LSP endpoints when semantic or structural accuracy matters.
       requestBody:
         required: true
         content:
@@ -47,14 +47,14 @@ paths:
     post:
       operationId: applyCodeEditPlan
       summary: Dry-run or apply a hash-guarded multi-file code edit plan.
-      description: All file hashes are preflighted before any write. Each file replacement is atomic; the complete multi-file plan is not claimed to be filesystem-transaction atomic.
+      description: All file hashes are preflighted before any write. Each file replacement is atomic; the complete multi-file plan is not claimed to be filesystem-transaction atomic. Supplying session_id records original and resulting hashes for hash-safe rollback.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CodeEditPlanRequest' }
       responses:
-        '200': { description: Per-file new hashes, change counts, and compact previews. }
+        '200': { description: Per-file new hashes, change counts, compact previews, and optional session association. }
         '409': { description: A target changed or an exact edit was ambiguous. }
   /v1/code/tasks:
     post:
@@ -113,6 +113,7 @@ components:
       required: [workspace, files]
       properties:
         workspace: { type: string, minLength: 1 }
+        session_id: { type: string, description: Optional active coding session used to track original and resulting file hashes for rollback. }
         dry_run: { type: boolean, default: false }
         files:
           type: array
