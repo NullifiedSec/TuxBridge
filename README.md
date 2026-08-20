@@ -7,8 +7,11 @@ The server, not the model-side schema, is the authorization boundary. Workspaces
 ## v0.1 alpha surface
 
 - system metadata and common development-tool availability
+- bounded tool-version probing for Git, Rust, Node, Bun, Go, Python, PHP, Docker, and friends
+- process metadata inspection without exposing command lines or environment variables
+- TCP listener inspection and mounted-filesystem capacity reporting
 - doctor diagnostics
-- workspace listing, metadata, capabilities, and safe path resolution
+- workspace listing, metadata, capabilities, safe path resolution, and bounded tree summaries
 - safe workspace-relative directory listing, stat, bounded UTF-8 reads, batch reads, and recursive content search
 - full-file SHA-256 checks for optimistic concurrency
 - atomic create/replace and targeted exact-match patching
@@ -16,7 +19,7 @@ The server, not the model-side schema, is the authorization boundary. Workspaces
 - project manifest/package-manager inspection
 - argv-based synchronous command execution
 - cancellable background command jobs with timeout, retention, job-count limits, and bounded stdout/stderr
-- structured Git status, branches, log, and diff
+- structured Git status, branches, HEAD metadata, remotes, stash listing, log, and diff
 - Git fetch, clean-tree fast-forward-only pull, explicit add, commit, and non-force push
 - global request-body and concurrent-request limits
 - request IDs, no-store/nosniff response headers, and body-free/header-free audit logging
@@ -49,6 +52,12 @@ curl -H "Authorization: Bearer $TUXBRIDGE_API_KEY" http://127.0.0.1:8787/v1/doct
 ```
 
 Every response is assigned an `X-TuxBridge-Request-Id`. The service logs request ID, method, path, response status, and duration; it deliberately does not log authorization headers or request bodies.
+
+## Bonus inspection endpoints
+
+The bonus host-inspection tools are intentionally read-only and bounded. Process inspection returns PID/name/state/UID but not argv or environment variables, because those frequently contain secrets. TCP listener inspection uses `ss -lnt` and disk reporting uses `df -P -B1`; `doctor` reports when those helpers are missing.
+
+Workspace tree summaries do not follow symlinks and enforce depth/entry caps. Git bonus reads expose current HEAD/upstream, configured remote URLs, and stash metadata without mutating repository state.
 
 ## ChatGPT Action
 
