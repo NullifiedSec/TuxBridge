@@ -208,23 +208,41 @@ paths:
     post:
       operationId: runCommand
       summary: Run one argv-based command in a command-enabled workspace.
-      description: No shell is invoked implicitly. The process inherits the TuxBridge service account privileges.
+      description: Available in loose and i_want_to_nuke_my_server profiles; blocked by the default profile.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CommandRequest' }
-      responses: { '200': { description: Command result. } }
+      responses:
+        '200': { description: Command result. }
+        '403': { description: Blocked by the default security profile. }
+  /v1/commands/raw:
+    post:
+      operationId: runRawCommand
+      summary: Run a profile-aware command string in a command-enabled workspace.
+      description: Default accepts only simple allowlisted commands with shell grammar rejected. Loose and i_want_to_nuke_my_server execute through /bin/bash --noprofile --norc -lc as the TuxBridge service user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RawCommandRequest' }
+      responses:
+        '200': { description: Command result including active profile. }
+        '403': { description: Command or program blocked by the active profile. }
   /v1/commands/start:
     post:
       operationId: startCommand
       summary: Start a bounded cancellable background command.
+      description: Available in loose and i_want_to_nuke_my_server profiles; blocked by the default profile.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CommandRequest' }
-      responses: { '200': { description: Initial job snapshot. } }
+      responses:
+        '200': { description: Initial job snapshot. }
+        '403': { description: Blocked by the default security profile. }
   /v1/jobs/{id}:
     get:
       operationId: getCommandJob
@@ -492,6 +510,14 @@ components:
           minItems: 1
           maxItems: 256
           items: { type: string }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+    RawCommandRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, command]
+      properties:
+        workspace: { type: string, minLength: 1 }
+        command: { type: string, minLength: 1, maxLength: 16384 }
         timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
     GitLogRequest:
       type: object
