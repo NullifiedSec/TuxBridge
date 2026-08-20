@@ -54,9 +54,12 @@ case "$choice" in
   *) echo "Invalid profile." >&2; exit 1 ;;
 esac
 
-if ! id "$USER_NAME" >/dev/null 2>&1; then
-  useradd --create-home --home-dir "$HOME_DIR" --shell /bin/bash "$USER_NAME"
+if id "$USER_NAME" >/dev/null 2>&1; then
+  echo "Refusing to reuse existing user $USER_NAME automatically." >&2
+  echo "Remove/rename that account or install on a host without a pre-existing tuxbridge user." >&2
+  exit 1
 fi
+useradd --create-home --home-dir "$HOME_DIR" --shell /bin/bash "$USER_NAME"
 
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$HOME_DIR"
 install -d -o root -g "$USER_NAME" -m 0750 "$CONFIG_DIR"
@@ -87,6 +90,17 @@ max_command_timeout_seconds = 900
 command_output_bytes = 2097152
 max_jobs = 128
 job_retention_seconds = 3600
+
+[workspaces.home]
+root = "$HOME_DIR"
+
+[workspaces.home.capabilities]
+fs_read = true
+fs_write = true
+commands = true
+git_read = true
+git_write = true
+git_network = true
 EOF
 chmod 0640 "$CONFIG_DIR/tuxbridge.toml"
 chown root:"$USER_NAME" "$CONFIG_DIR/tuxbridge.toml"
@@ -155,7 +169,7 @@ systemctl enable --now tuxbridge.service
 
 echo "Installed TuxBridge with profile: $profile"
 echo "Service user: $USER_NAME"
-echo "Home: $HOME_DIR"
+echo "Home workspace: $HOME_DIR"
 echo "Config: $CONFIG_DIR/tuxbridge.toml"
 echo "API key file: $CONFIG_DIR/tuxbridge.env"
 echo "Retrieve the API key with: sudo cat $CONFIG_DIR/tuxbridge.env"
