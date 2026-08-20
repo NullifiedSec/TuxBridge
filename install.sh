@@ -58,7 +58,6 @@ if ! id "$USER_NAME" >/dev/null 2>&1; then
   useradd --create-home --home-dir "$HOME_DIR" --shell /bin/bash "$USER_NAME"
 fi
 
-# Intentionally ordinary account: TuxBridge never adds sudo/admin/docker groups.
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$HOME_DIR"
 install -d -o root -g "$USER_NAME" -m 0750 "$CONFIG_DIR"
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$STATE_DIR"
@@ -78,7 +77,7 @@ api_key_env = "TUXBRIDGE_API_KEY"
 
 [security]
 profile = "$profile"
-default_command_allowlist = ["pwd", "ls", "find", "cat", "head", "tail", "wc", "grep", "rg", "git", "cargo", "rustc", "node", "npm", "bun", "go", "python3"]
+default_command_allowlist = ["pwd", "ls", "cat", "head", "tail", "wc", "grep", "stat", "du", "df", "uname", "id", "whoami"]
 
 [limits]
 max_body_bytes = 10485760
@@ -88,9 +87,6 @@ max_command_timeout_seconds = 900
 command_output_bytes = 2097152
 max_jobs = 128
 job_retention_seconds = 3600
-
-# Add workspaces explicitly after install. Nothing outside the service user's
-# normal OS access is granted automatically.
 EOF
 chmod 0640 "$CONFIG_DIR/tuxbridge.toml"
 chown root:"$USER_NAME" "$CONFIG_DIR/tuxbridge.toml"
@@ -119,8 +115,6 @@ EOF
 
 if [[ "$profile" == "default" ]]; then
   cat >> "$SERVICE_DST" <<'EOF'
-
-# Default profile: additional service sandbox on top of the dedicated Unix user.
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
@@ -159,12 +153,9 @@ fi
 systemctl daemon-reload
 systemctl enable --now tuxbridge.service
 
-echo
 echo "Installed TuxBridge with profile: $profile"
 echo "Service user: $USER_NAME"
 echo "Home: $HOME_DIR"
 echo "Config: $CONFIG_DIR/tuxbridge.toml"
 echo "API key file: $CONFIG_DIR/tuxbridge.env"
-echo
-echo "Retrieve the API key as root with:"
-echo "  sudo cat $CONFIG_DIR/tuxbridge.env"
+echo "Retrieve the API key with: sudo cat $CONFIG_DIR/tuxbridge.env"
