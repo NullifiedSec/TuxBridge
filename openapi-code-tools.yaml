@@ -1,0 +1,171 @@
+openapi: 3.1.0
+info:
+  title: TuxBridge Coding Tools
+  version: 0.1.0
+  description: Editor-grade coding primitives for a TuxBridge workspace.
+servers:
+  - url: https://tuxbridge.example.com
+    description: Use the same HTTPS TuxBridge endpoint and Bearer key as the main API.
+security:
+  - bearerAuth: []
+paths:
+  /v1/code/context:
+    post:
+      operationId: getCodeContext
+      summary: Read a numbered code window and full-file SHA-256 for safe follow-up edits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodeContextRequest' }
+      responses:
+        '200': { description: Numbered context, line metadata, and full-file hash. }
+  /v1/code/symbols:
+    post:
+      operationId: getCodeSymbols
+      summary: Get a lightweight declaration outline for a source file.
+      description: Heuristic editor navigation aid, not compiler or LSP truth.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodeSymbolsRequest' }
+      responses:
+        '200': { description: Detected declarations and their lines. }
+  /v1/code/references:
+    post:
+      operationId: findCodeReferences
+      summary: Search identifier-boundary references across a workspace or subtree.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodeReferencesRequest' }
+      responses:
+        '200': { description: Bounded reference locations and previews. }
+  /v1/code/edit-plan:
+    post:
+      operationId: applyCodeEditPlan
+      summary: Dry-run or apply a hash-guarded multi-file code edit plan.
+      description: All file hashes are preflighted before any write. Each file replacement is atomic; the complete multi-file plan is not claimed to be filesystem-transaction atomic.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodeEditPlanRequest' }
+      responses:
+        '200': { description: Per-file new hashes, change counts, and compact previews. }
+        '409': { description: A target changed or an exact edit was ambiguous. }
+  /v1/code/tasks:
+    post:
+      operationId: discoverCodeTasks
+      summary: Discover likely check, test, lint, build, and formatting commands without executing them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceRequest' }
+      responses:
+        '200': { description: Suggested argv tasks and execution-risk notes. }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    WorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties:
+        workspace: { type: string, minLength: 1 }
+    CodeContextRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties:
+        workspace: { type: string, minLength: 1 }
+        path: { type: string, minLength: 1 }
+        start_line: { type: integer, minimum: 1 }
+        end_line: { type: integer, minimum: 1 }
+        context_before: { type: integer, minimum: 0, maximum: 10000, default: 20 }
+        context_after: { type: integer, minimum: 0, maximum: 10000, default: 20 }
+        max_bytes: { type: integer, minimum: 1, maximum: 524288 }
+    CodeSymbolsRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties:
+        workspace: { type: string, minLength: 1 }
+        path: { type: string, minLength: 1 }
+    CodeReferencesRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, identifier]
+      properties:
+        workspace: { type: string, minLength: 1 }
+        identifier: { type: string, minLength: 1, maxLength: 256 }
+        path: { type: string, default: '' }
+        max_results: { type: integer, minimum: 1, maximum: 2000, default: 500 }
+    CodeEditPlanRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, files]
+      properties:
+        workspace: { type: string, minLength: 1 }
+        dry_run: { type: boolean, default: false }
+        files:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { $ref: '#/components/schemas/FileEditPlan' }
+    FileEditPlan:
+      type: object
+      additionalProperties: false
+      required: [path, expected_sha256, edits]
+      properties:
+        path: { type: string, minLength: 1 }
+        expected_sha256: { type: string, minLength: 64, maxLength: 64 }
+        edits:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/ReplaceExactEdit'
+              - $ref: '#/components/schemas/ReplaceLinesEdit'
+              - $ref: '#/components/schemas/InsertBeforeEdit'
+              - $ref: '#/components/schemas/InsertAfterEdit'
+    ReplaceExactEdit:
+      type: object
+      additionalProperties: false
+      required: [kind, old, new]
+      properties:
+        kind: { type: string, const: replace_exact }
+        old: { type: string, minLength: 1 }
+        new: { type: string }
+    ReplaceLinesEdit:
+      type: object
+      additionalProperties: false
+      required: [kind, start_line, end_line, new]
+      properties:
+        kind: { type: string, const: replace_lines }
+        start_line: { type: integer, minimum: 1 }
+        end_line: { type: integer, minimum: 1 }
+        new: { type: string }
+    InsertBeforeEdit:
+      type: object
+      additionalProperties: false
+      required: [kind, line, new]
+      properties:
+        kind: { type: string, const: insert_before }
+        line: { type: integer, minimum: 1 }
+        new: { type: string }
+    InsertAfterEdit:
+      type: object
+      additionalProperties: false
+      required: [kind, line, new]
+      properties:
+        kind: { type: string, const: insert_after }
+        line: { type: integer, minimum: 1 }
+        new: { type: string }
