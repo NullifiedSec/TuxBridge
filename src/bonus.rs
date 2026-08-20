@@ -217,14 +217,14 @@ async fn probe_version(name: &'static str, args: &[&str]) -> ToolVersion {
 }
 
 async fn run_bounded(program: &str, args: &[&str], seconds: u64) -> Result<String, ApiError> {
-    let future = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .output();
-    let output = time::timeout(Duration::from_secs(seconds), future)
+        .kill_on_drop(true);
+    let output = time::timeout(Duration::from_secs(seconds), command.output())
         .await
         .map_err(|_| ApiError::BadRequest(format!("{program} timed out")))?
         .map_err(|error| ApiError::NotFound(format!("failed to execute {program}: {error}")))?;
