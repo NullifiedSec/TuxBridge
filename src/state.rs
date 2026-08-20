@@ -6,6 +6,7 @@ use std::sync::{
 use tokio::sync::Semaphore;
 
 use crate::{
+    audit::AuditStore,
     command::JobStore,
     config::{Config, ConfigError},
 };
@@ -14,6 +15,7 @@ use crate::{
 pub struct AppState {
     pub config: Arc<Config>,
     pub jobs: JobStore,
+    pub audit: AuditStore,
     pub request_gate: Arc<Semaphore>,
     request_sequence: Arc<AtomicU64>,
     api_key: Arc<str>,
@@ -31,6 +33,7 @@ impl AppState {
         Ok(Self {
             config: Arc::new(config),
             jobs,
+            audit: AuditStore::default(),
             request_gate,
             request_sequence: Arc::new(AtomicU64::new(0)),
             api_key: Arc::from(api_key),
