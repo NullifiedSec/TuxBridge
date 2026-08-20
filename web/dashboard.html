@@ -1,50 +1,46 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TuxBridge Mission Control</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TuxBridge Mission Control</title>
 <style>
-:root{color-scheme:dark;--bg:#0b0d10;--panel:#11151a;--line:#242b33;--text:#e8edf2;--muted:#8b98a5;--accent:#9bdcff;--good:#78dba9;--warn:#ffd479;--bad:#ff8585;--mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;--sans:Inter,ui-sans-serif,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans)}header{padding:22px 26px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:20px;align-items:center;position:sticky;top:0;background:rgba(11,13,16,.96);backdrop-filter:blur(8px);z-index:3}h1{font-size:18px;margin:0}.sub{font-size:12px;color:var(--muted)}main{padding:22px;max-width:1500px;margin:auto}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span6{grid-column:span 6}.span8{grid-column:span 8}.span12{grid-column:span 12}@media(max-width:900px){.span3,.span4,.span6,.span8{grid-column:span 12}}.label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.value{font-family:var(--mono);font-size:15px;margin-top:7px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}input,select,button{background:#0d1116;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:9px 10px}input{min-width:280px}button{cursor:pointer}button:hover{border-color:#475564}.pill{font-family:var(--mono);font-size:11px;padding:4px 7px;border:1px solid var(--line);border-radius:999px}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}pre{white-space:pre-wrap;overflow:auto;background:#090b0e;border:1px solid var(--line);padding:12px;border-radius:9px;font-family:var(--mono);font-size:12px;line-height:1.45;max-height:520px}.list{display:flex;flex-direction:column;gap:8px;max-height:460px;overflow:auto}.item{border-bottom:1px solid var(--line);padding:8px 0;font-family:var(--mono);font-size:12px}.item:last-child{border:0}.grow{flex:1}.muted{color:var(--muted)}.tiny{font-size:11px}.workspace{border:1px solid var(--line);padding:10px;border-radius:9px;margin-top:8px}.workspace button{margin-top:8px}#authState{font-family:var(--mono);font-size:12px}
-</style>
-</head>
-<body>
-<header>
-  <div><h1>TuxBridge Mission Control</h1><div class="sub">live host-agent observability without turning TuxBridge into an IDE</div></div>
-  <div class="row"><input id="apiKey" type="password" placeholder="Bearer API key"><button id="connect">Connect</button><span id="authState" class="muted">disconnected</span></div>
-</header>
-<main>
-<div class="grid">
-  <section class="card span3"><div class="label">Security profile</div><div id="profile" class="value">—</div></section>
-  <section class="card span3"><div class="label">Workspaces</div><div id="workspaceCount" class="value">—</div></section>
-  <section class="card span3"><div class="label">LSP ready</div><div id="lspCount" class="value">—</div></section>
-  <section class="card span3"><div class="label">Requests retained</div><div id="eventCount" class="value">—</div></section>
+:root{color-scheme:dark;--bg:#0a0c0f;--panel:#101419;--line:#252d36;--text:#edf2f7;--muted:#8794a1;--good:#72d6a0;--warn:#ffd06d;--bad:#ff7f88;--accent:#8ed8ff;--mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;--sans:Inter,ui-sans-serif,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans)}header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:16px;align-items:center;position:sticky;top:0;background:rgba(10,12,15,.96);backdrop-filter:blur(10px);z-index:3}h1{font-size:18px;margin:0}.sub,.muted{color:var(--muted)}.tiny{font-size:11px}main{padding:18px;max-width:1600px;margin:auto}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px;min-width:0}.span2{grid-column:span 2}.span3{grid-column:span 3}.span4{grid-column:span 4}.span6{grid-column:span 6}.span8{grid-column:span 8}.span12{grid-column:span 12}@media(max-width:1000px){.span2,.span3,.span4,.span6,.span8{grid-column:span 12}}.label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.09em}.value{font:15px var(--mono);margin-top:6px}.row{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.grow{flex:1}input,select,button{background:#0c1014;border:1px solid var(--line);color:var(--text);border-radius:7px;padding:8px 9px}input{min-width:260px}button{cursor:pointer}button:hover{border-color:#4a5968}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.pill{font:10px var(--mono);padding:3px 6px;border:1px solid var(--line);border-radius:999px}.list{display:flex;flex-direction:column;gap:5px;max-height:420px;overflow:auto}.item{border-bottom:1px solid var(--line);padding:7px 0;font:11px/1.4 var(--mono)}.item:last-child{border:0}.box{border:1px solid var(--line);padding:9px;border-radius:8px;margin-top:7px}pre{white-space:pre;overflow:auto;background:#080a0d;border:1px solid var(--line);padding:11px;border-radius:8px;font:11px/1.45 var(--mono);max-height:560px}.stdout{color:#cbd6df}.stderr{color:#ffb4b8}.event-kind{color:var(--accent)}
+</style></head><body>
+<header><div><h1>TuxBridge Mission Control</h1><div class="sub">agent activity, code changes, jobs, approvals and semantic tooling</div></div><div class="row"><input id="apiKey" type="password" placeholder="Bearer API key"><button id="connect">Connect</button><span id="authState" class="muted tiny">disconnected</span></div></header>
+<main><div class="grid">
+<section class="card span2"><div class="label">Profile</div><div id="profile" class="value">—</div></section>
+<section class="card span2"><div class="label">Workspaces</div><div id="workspaceCount" class="value">—</div></section>
+<section class="card span2"><div class="label">LSP ready</div><div id="lspCount" class="value">—</div></section>
+<section class="card span2"><div class="label">Jobs</div><div id="jobCount" class="value">—</div></section>
+<section class="card span2"><div class="label">Sessions</div><div id="sessionCount" class="value">—</div></section>
+<section class="card span2"><div class="label">SSE</div><div id="streamState" class="value muted">offline</div></section>
 
-  <section class="card span4"><div class="label">Workspaces</div><div id="workspaces"></div></section>
-  <section class="card span8"><div class="row"><div class="label grow">Git diff viewer</div><select id="diffWorkspace"></select><button id="loadDiff">Refresh diff</button></div><pre id="diff">Select a workspace.</pre></section>
+<section class="card span4"><div class="label">Workspaces</div><div id="workspaces"></div></section>
+<section class="card span8"><div class="row"><div class="label grow">Git diff</div><select id="diffWorkspace"></select><button id="loadMap">Repo map</button><button id="loadDiff">Diff</button></div><pre id="diff">Select a workspace.</pre></section>
 
-  <section class="card span6"><div class="label">Language servers</div><div id="lsps" class="list"></div></section>
-  <section class="card span6"><div class="label">Live request activity</div><div id="events" class="list"></div></section>
-</div>
-</main>
+<section class="card span6"><div class="label">Live agent timeline</div><div id="events" class="list"></div></section>
+<section class="card span6"><div class="label">Live command output</div><pre id="commandStream">Waiting for command output…</pre></section>
+
+<section class="card span4"><div class="label">Pending approvals</div><div id="approvals" class="list"></div></section>
+<section class="card span4"><div class="label">Background jobs</div><div id="jobs" class="list"></div></section>
+<section class="card span4"><div class="label">Coding sessions</div><div id="sessions" class="list"></div></section>
+
+<section class="card span12"><div class="label">Language servers</div><div id="lsps" class="row"></div></section>
+</div></main>
 <script>
-const $=id=>document.getElementById(id); let key=sessionStorage.getItem('tuxbridge_api_key')||''; $('apiKey').value=key;
+const $=id=>document.getElementById(id);let key=sessionStorage.getItem('tuxbridge_api_key')||'';let streamAbort=null;let eventBuffer=[];$('apiKey').value=key;
 function headers(){return {'Authorization':'Bearer '+key,'Content-Type':'application/json'}}
-async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers(),...(opts.headers||{})}}); if(!r.ok)throw new Error(r.status+' '+await r.text()); return r.json()}
+async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{...headers(),...(opts.headers||{})}});if(!r.ok)throw new Error(r.status+' '+await r.text());return r.json()}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function refresh(){if(!key)return;try{
- const [profile,workspaces,lsps,events]=await Promise.all([api('/v1/security/profile'),api('/v1/workspaces'),api('/v1/lsp/servers'),api('/v1/audit/events')]);
- $('authState').textContent='connected'; $('authState').className='good';
- $('profile').textContent=profile.profile; $('profile').className='value '+(profile.profile==='default'?'good':profile.profile==='loose'?'warn':'bad');
- $('workspaceCount').textContent=workspaces.length; $('eventCount').textContent=events.length;
- const ready=lsps.filter(x=>x.available); $('lspCount').textContent=ready.length+'/'+lsps.length;
- $('workspaces').innerHTML=workspaces.map(w=>`<div class="workspace"><b>${esc(w.name)}</b><div class="tiny muted">${esc(w.root)}</div><div class="tiny">${Object.entries(w.capabilities||{}).filter(([,v])=>v).map(([k])=>esc(k)).join(' · ')}</div></div>`).join('');
- const current=$('diffWorkspace').value; $('diffWorkspace').innerHTML=workspaces.map(w=>`<option value="${esc(w.name)}">${esc(w.name)}</option>`).join(''); if(current&&workspaces.some(w=>w.name===current))$('diffWorkspace').value=current;
- $('lsps').innerHTML=lsps.map(x=>`<div class="item"><span class="${x.available?'good':'muted'}">${x.available?'●':'○'}</span> ${esc(x.name)} <span class="muted">${esc((x.extensions||[]).join(', '))}</span><div class="tiny muted">${esc((x.argv||[]).join(' '))}</div></div>`).join('');
- $('events').innerHTML=events.slice().reverse().map(e=>`<div class="item"><span class="${e.status<400?'good':e.status<500?'warn':'bad'}">${e.status}</span> ${esc(e.method)} ${esc(e.path)}<div class="tiny muted">${esc(e.request_id)} · ${e.duration_ms} ms</div></div>`).join('');
-}catch(e){$('authState').textContent='error';$('authState').className='bad';console.error(e)}}
-async function loadDiff(){const workspace=$('diffWorkspace').value;if(!workspace)return;try{const d=await api('/v1/git/diff',{method:'POST',body:JSON.stringify({workspace,staged:false,max_bytes:1048576})});$('diff').textContent=d.diff??JSON.stringify(d,null,2)}catch(e){$('diff').textContent=String(e)}}
-$('connect').onclick=()=>{key=$('apiKey').value.trim();sessionStorage.setItem('tuxbridge_api_key',key);refresh()}; $('loadDiff').onclick=loadDiff; if(key)refresh(); setInterval(refresh,2000);
-</script>
-</body>
-</html>
+function statusClass(v){return v>=500?'bad':v>=400?'warn':'good'}
+function renderEvents(){ $('events').innerHTML=eventBuffer.slice(-150).reverse().map(e=>`<div class="item"><span class="event-kind">${esc(e.kind)}</span> ${esc(e.summary)}<div class="tiny muted">#${e.sequence} ${e.workspace?esc(e.workspace)+' · ':''}${new Date(Number(e.timestamp_unix_ms)).toLocaleTimeString()}</div></div>`).join('') }
+function onEvent(e){eventBuffer.push(e);if(eventBuffer.length>500)eventBuffer.shift();renderEvents();if(e.kind==='job.stdout'||e.kind==='job.stderr'){const chunk=e.data?.chunk||'';const pre=$('commandStream');if(pre.textContent==='Waiting for command output…')pre.textContent='';pre.textContent+=chunk;if(pre.textContent.length>200000)pre.textContent=pre.textContent.slice(-200000);pre.scrollTop=pre.scrollHeight;}if(e.kind.startsWith('approval.')||e.kind.startsWith('session.')||e.kind==='job.finished'||e.kind==='job.started')refreshStatic()}
+async function connectEvents(){if(streamAbort)streamAbort.abort();streamAbort=new AbortController();$('streamState').textContent='connecting';$('streamState').className='value warn';try{const r=await fetch('/v1/events/stream',{headers:{Authorization:'Bearer '+key},signal:streamAbort.signal});if(!r.ok)throw new Error(await r.text());$('streamState').textContent='live';$('streamState').className='value good';const reader=r.body.getReader();const decoder=new TextDecoder();let buffer='';while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let idx;while((idx=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,idx);buffer=buffer.slice(idx+2);const data=frame.split('\n').filter(x=>x.startsWith('data:')).map(x=>x.slice(5).trim()).join('\n');if(data){try{onEvent(JSON.parse(data))}catch{}}}}}catch(e){if(!streamAbort?.signal.aborted){$('streamState').textContent='retrying';$('streamState').className='value bad';setTimeout(connectEvents,1500)}}}
+async function refreshStatic(){if(!key)return;try{const [profile,workspaces,lsps,approvals,jobs,sessions,events]=await Promise.all([api('/v1/security/profile'),api('/v1/workspaces'),api('/v1/lsp/servers'),api('/v1/approvals'),api('/v1/jobs'),api('/v1/code/sessions'),api('/v1/events')]);$('authState').textContent='connected';$('authState').className='good tiny';$('profile').textContent=profile.profile;$('profile').className='value '+(profile.profile==='default'?'good':profile.profile==='loose'?'warn':'bad');$('workspaceCount').textContent=workspaces.length;$('lspCount').textContent=lsps.filter(x=>x.available).length+'/'+lsps.length;$('jobCount').textContent=jobs.filter(j=>j.status==='running').length+'/'+jobs.length;$('sessionCount').textContent=sessions.filter(s=>s.status==='active').length+'/'+sessions.length;
+$('workspaces').innerHTML=workspaces.map(w=>`<div class="box"><b>${esc(w.name)}</b><div class="tiny muted">${esc(w.root)}</div><div class="tiny">${Object.entries(w.capabilities||{}).filter(([,v])=>v).map(([k])=>esc(k)).join(' · ')}</div></div>`).join('');const current=$('diffWorkspace').value;$('diffWorkspace').innerHTML=workspaces.map(w=>`<option value="${esc(w.name)}">${esc(w.name)}</option>`).join('');if(current&&workspaces.some(w=>w.name===current))$('diffWorkspace').value=current;
+$('lsps').innerHTML=lsps.map(x=>`<span class="pill ${x.available?'good':'muted'}">${x.available?'●':'○'} ${esc(x.name)} · ${esc((x.extensions||[]).join(','))}</span>`).join('');
+const pending=approvals.filter(a=>a.status==='pending');$('approvals').innerHTML=pending.length?pending.map(a=>`<div class="item"><b>${esc(a.path)}</b><div class="row"><span class="tiny muted">${esc(a.id)}</span><button onclick="approve('${esc(a.id)}')">Approve</button><button onclick="deny('${esc(a.id)}')">Deny</button></div></div>`).join(''):'<div class="item muted">No pending approvals.</div>';
+$('jobs').innerHTML=jobs.slice().reverse().map(j=>`<div class="item"><span class="${j.status==='completed'?'good':j.status==='running'?'warn':'bad'}">${esc(j.status)}</span> ${esc(j.id)}<div>${esc((j.argv||[]).join(' '))}</div><div class="tiny muted">exit ${j.exit_code??'—'} · ${(j.diagnostics||[]).length} diagnostics</div></div>`).join('')||'<div class="item muted">No jobs.</div>';
+$('sessions').innerHTML=sessions.slice().reverse().map(s=>`<div class="item"><span class="${s.status==='active'?'warn':'good'}">${esc(s.status)}</span> ${esc(s.title)}<div class="tiny muted">${esc(s.id)} · ${s.files.length} files</div>${s.status==='active'?`<button onclick="rollback('${esc(s.id)}')">Rollback</button>`:''}</div>`).join('')||'<div class="item muted">No sessions.</div>';
+if(eventBuffer.length===0){eventBuffer=events.slice(-150);renderEvents();}}catch(e){$('authState').textContent='error';$('authState').className='bad tiny';console.error(e)}}
+async function approve(id){await api('/v1/approvals/'+encodeURIComponent(id)+'/approve',{method:'POST'});refreshStatic()}async function deny(id){await api('/v1/approvals/'+encodeURIComponent(id)+'/deny',{method:'POST'});refreshStatic()}async function rollback(id){if(!confirm('Rollback only the files written by this session? Hash conflicts will abort safely.'))return;try{await api('/v1/code/sessions/'+encodeURIComponent(id)+'/rollback',{method:'POST'});refreshStatic()}catch(e){alert(String(e))}}
+async function loadDiff(){const workspace=$('diffWorkspace').value;if(!workspace)return;try{const d=await api('/v1/git/diff',{method:'POST',body:JSON.stringify({workspace,staged:false,max_bytes:1048576})});$('diff').textContent=d.content??JSON.stringify(d,null,2)}catch(e){$('diff').textContent=String(e)}}async function loadMap(){const workspace=$('diffWorkspace').value;if(!workspace)return;try{$('diff').textContent=JSON.stringify(await api('/v1/code/map',{method:'POST',body:JSON.stringify({workspace})}),null,2)}catch(e){$('diff').textContent=String(e)}}
+$('connect').onclick=()=>{key=$('apiKey').value.trim();sessionStorage.setItem('tuxbridge_api_key',key);refreshStatic();connectEvents()};$('loadDiff').onclick=loadDiff;$('loadMap').onclick=loadMap;if(key){refreshStatic();connectEvents()}setInterval(refreshStatic,10000);
+</script></body></html>
