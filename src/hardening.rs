@@ -9,7 +9,11 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::{security::SecurityProfile, state::AppState};
+use crate::{
+    audit::{AuditEvent, unix_millis},
+    security::SecurityProfile,
+    state::AppState,
+};
 
 #[derive(Serialize)]
 struct BusyResponse {
@@ -30,9 +34,6 @@ pub async fn protect_host(
 ) -> Response {
     let path = request.uri().path().to_owned();
 
-    // In the default profile the only command endpoint is /v1/commands/raw,
-    // whose parser rejects shell grammar and enforces the executable allowlist.
-    // Blocking the argv/background APIs here prevents them from bypassing that policy.
     if state.config.security.profile == SecurityProfile::Default
         && matches!(path.as_str(), "/v1/commands/run" | "/v1/commands/start")
     {
@@ -61,6 +62,7 @@ pub async fn protect_host(
     };
 
     let request_id = state.next_request_id();
+    let sequence = u64::from_str_radix(request_id.trim_start_matches("tb-"), 16).unwrap_or(0);
     let method = request.method().clone();
     let started = Instant::now();
 
@@ -79,14 +81,25 @@ pub async fn protect_host(
         HeaderValue::from_static("nosniff"),
     );
 
+    let duration_ms = started.elapsed().as_millis();
+    let status = response.status().as_u16();
+
     eprintln!(
         "request_id={} method={} path={} status={} duration_ms={}",
-        request_id,
-        method,
-        path,
-        response.status().as_u16(),
-        started.elapsed().as_millis()
+        request_id, method, path, status, duration_ms
     );
+
+    if path != "/v1/audit/events" && path != "/ui" {
+        state.audit.push(AuditEvent {
+            sequence,
+            timestamp_unix_ms: unix_millis(),
+            request_id,
+            method: method.to_string(),
+            path,
+            status,
+            duration_ms,
+        }).await;
+    }
 
     response
 }
