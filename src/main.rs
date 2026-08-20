@@ -8,6 +8,7 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 
 mod auth;
+mod command;
 mod config;
 mod error;
 mod fs;
@@ -59,6 +60,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/fs/write", post(mutation::write_file))
         .route("/v1/fs/patch", post(mutation::patch_file))
         .route("/v1/project/inspect", post(project::inspect_project))
+        .route("/v1/commands/run", post(command::run_command))
+        .route("/v1/commands/start", post(command::start_command))
+        .route(
+            "/v1/jobs/{id}",
+            get(command::get_job).delete(command::cancel_job),
+        )
         .route("/v1/git/status", post(git::git_status))
         .route("/v1/git/branches", post(git::git_branches))
         .route("/v1/git/log", post(git::git_log))
