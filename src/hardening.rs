@@ -38,7 +38,7 @@ pub async fn protect_host(State(state): State<AppState>, request: Request, next:
         let approved = match supplied { Some(id) => state.approvals.consume(id, &path).await, None => false };
         if !approved {
             let pending = state.approvals.create(&path).await;
-            state.events.emit("approval.required", None, format!("approval required for {path}"), serde_json::json!({"approval_id":pending.id,"path":path})).await;
+            state.events.emit("approval.required", None, format!("approval required for {path}"), serde_json::json!({"approval_id":pending.id.clone(),"path":path.clone()})).await;
             return (StatusCode::PRECONDITION_REQUIRED, Json(ApprovalRequiredResponse { error:"approval_required", approval_id:pending.id, path, message:"approve this operation in Mission Control, then retry the request with X-TuxBridge-Approval-Id" })).into_response();
         }
     }
@@ -53,7 +53,7 @@ pub async fn protect_host(State(state): State<AppState>, request: Request, next:
     let method = request.method().clone();
     let started = Instant::now();
     if path != "/v1/events/stream" {
-        state.events.emit("request.started", None, format!("{} {}", method, path), serde_json::json!({"request_id":request_id,"method":method.to_string(),"path":path})).await;
+        state.events.emit("request.started", None, format!("{} {}", method, path), serde_json::json!({"request_id":request_id.clone(),"method":method.to_string(),"path":path.clone()})).await;
     }
 
     let mut response = next.run(request).await;
