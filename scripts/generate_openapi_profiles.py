@@ -5,6 +5,13 @@ Canonical route/method/operation metadata comes from openapi.yaml plus the
 occupation policy in openapi-profiles.json. Only `operations` count toward the
 GPT Actions limit; `support_routes` are server-side role permissions used by
 Mission Control or other non-Action clients.
+
+The GPT Actions importer is intentionally treated as a stricter OpenAPI
+consumer than a general OpenAPI 3.1 validator. In particular, request bodies
+that resolve to an `allOf` composition may be rejected as "not an object
+schema" even when every composed member is an object. Generated GPT-facing
+schemas therefore flatten local object compositions into explicit object
+schemas while canonical openapi.yaml remains the complete source document.
 """
 from __future__ import annotations
 
@@ -75,6 +82,85 @@ def validate_manifest(profile: str, spec: dict, index: dict[str, tuple[str, str]
     return wanted_ids
 
 
+def _resolve_local_schema_ref(ref: str, schemas: dict) -> dict:
+    prefix = "#/components/schemas/"
+    if not ref.startswith(prefix):
+        raise SystemExit(f"cannot flatten non-local schema reference {ref!r}")
+    name = ref[len(prefix):]
+    target = schemas.get(name)
+    if not isinstance(target, dict):
+        raise SystemExit(f"cannot flatten missing schema reference {ref!r}")
+    return target
+
+
+def _flatten_object_schema(schema: dict, schemas: dict, stack: tuple[str, ...] = ()) -> dict:
+    """Flatten local allOf object compositions for GPT Actions compatibility."""
+    if "allOf" not in schema:
+        return copy.deepcopy(schema)
+
+    merged: dict = {"type": "object"}
+    required: list[str] = []
+    properties: dict = {}
+    additional_properties = None
+
+    for member in schema.get("allOf", []):
+        if not isinstance(member, dict):
+            raise SystemExit("allOf members must be object schemas")
+        if "$ref" in member:
+            ref = member["$ref"]
+            if ref in stack:
+                raise SystemExit(f"recursive schema composition while flattening {ref!r}")
+            member = _flatten_object_schema(
+                _resolve_local_schema_ref(ref, schemas), schemas, stack + (ref,)
+            )
+        else:
+            member = _flatten_object_schema(member, schemas, stack)
+
+        member_type = member.get("type")
+        if member_type not in (None, "object"):
+            raise SystemExit(f"cannot flatten non-object allOf member of type {member_type!r}")
+        for name in member.get("required", []):
+            if name not in required:
+                required.append(name)
+        member_properties = member.get("properties", {})
+        if not isinstance(member_properties, dict):
+            raise SystemExit("object schema properties must be an object")
+        overlap = set(properties) & set(member_properties)
+        if overlap:
+            raise SystemExit(f"cannot flatten conflicting schema properties: {sorted(overlap)}")
+        properties.update(copy.deepcopy(member_properties))
+        if "additionalProperties" in member:
+            value = member["additionalProperties"]
+            if additional_properties is not None and additional_properties != value:
+                raise SystemExit("cannot flatten conflicting additionalProperties constraints")
+            additional_properties = copy.deepcopy(value)
+
+    for key, value in schema.items():
+        if key == "allOf":
+            continue
+        if key in {"type", "required", "properties", "additionalProperties"}:
+            continue
+        merged[key] = copy.deepcopy(value)
+
+    if required:
+        merged["required"] = required
+    if properties:
+        merged["properties"] = properties
+    if additional_properties is not None:
+        merged["additionalProperties"] = additional_properties
+    return merged
+
+
+def make_gpt_actions_compatible(spec: dict) -> None:
+    """Normalize request-body schemas around known GPT Actions importer limits."""
+    schemas = spec.get("components", {}).get("schemas", {})
+    if not isinstance(schemas, dict):
+        return
+    for name, schema in list(schemas.items()):
+        if isinstance(schema, dict) and "allOf" in schema:
+            schemas[name] = _flatten_object_schema(schema, schemas)
+
+
 def generate(profile: str, wanted_ids: list[str], canonical: dict) -> dict:
     wanted = set(wanted_ids)
     paths: dict = {}
@@ -101,6 +187,7 @@ def generate(profile: str, wanted_ids: list[str], canonical: dict) -> dict:
         "paths": paths,
         "components": copy.deepcopy(canonical.get("components", {})),
     }
+    make_gpt_actions_compatible(result)
     if operation_count(result) != len(wanted_ids):
         raise SystemExit(f"profile {profile!r} did not generate the expected operation count")
     return result
