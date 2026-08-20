@@ -35,7 +35,7 @@ pub enum JobStatus { Running, Completed, Failed, TimedOut, Cancelled }
 
 pub async fn run_command(State(state):State<AppState>,Json(request):Json<CommandRequest>)->Result<Json<CommandResult>,ApiError>{
     let workspace=command_workspace(&state,&request.workspace)?;validate_argv(&request.argv)?;let timeout=command_timeout(&state,request.timeout_seconds);let root=canonical_root(workspace)?;
-    state.events.emit("command.started",Some(&request.workspace),format!("running {}",request.argv[0]),serde_json::json!({"argv":request.argv})).await;
+    state.events.emit("command.started",Some(&request.workspace),format!("running {}",request.argv[0]),serde_json::json!({"argv":request.argv.clone()})).await;
     let result=execute(&root,request.argv,timeout,state.config.limits.command_output_bytes,None).await?;
     state.events.emit("command.finished",Some(&request.workspace),format!("command exited {:?}",result.exit_code),serde_json::json!({"exit_code":result.exit_code,"timed_out":result.timed_out,"diagnostics":result.diagnostics.len()})).await;
     Ok(Json(result))
@@ -45,7 +45,7 @@ pub async fn start_command(State(state):State<AppState>,Json(request):Json<Comma
     let workspace=command_workspace(&state,&request.workspace)?;validate_argv(&request.argv)?;let timeout=command_timeout(&state,request.timeout_seconds);let output_limit=state.config.limits.command_output_bytes;let root=canonical_root(workspace)?;
     let id=state.jobs.next_id();let(cancel_tx,cancel_rx)=oneshot::channel();let snapshot=JobSnapshot{id:id.clone(),workspace:request.workspace.clone(),argv:request.argv.clone(),status:JobStatus::Running,started_at_unix:unix_now(),finished_at_unix:None,exit_code:None,stdout:String::new(),stderr:String::new(),stdout_truncated:false,stderr_truncated:false,diagnostics:Vec::new(),error:None};
     state.jobs.insert(id.clone(),JobRecord{snapshot:snapshot.clone(),cancel:Some(cancel_tx)}).await?;
-    state.events.emit("job.started",Some(&request.workspace),format!("started {id}: {}",request.argv[0]),serde_json::json!({"job_id":id,"argv":request.argv})).await;
+    state.events.emit("job.started",Some(&request.workspace),format!("started {id}: {}",request.argv[0]),serde_json::json!({"job_id":id.clone(),"argv":request.argv.clone()})).await;
     let jobs=state.jobs.clone();let argv=request.argv;let events=state.events.clone();let workspace_name=request.workspace.clone();let job_id=id.clone();
     tokio::spawn(async move{let stream=StreamMeta{events:events.clone(),job_id:job_id.clone(),workspace:workspace_name.clone()};let completion=execute_inner(&root,argv,timeout,output_limit,Some(cancel_rx),Some(stream)).await;jobs.finish(&job_id,completion).await;if let Some(snapshot)=jobs.get(&job_id).await{events.emit("job.finished",Some(&workspace_name),format!("{} finished as {:?}",job_id,snapshot.status),serde_json::json!({"job_id":job_id,"status":snapshot.status,"exit_code":snapshot.exit_code,"diagnostics":snapshot.diagnostics.len()})).await;}});
     Ok(Json(snapshot))
@@ -86,7 +86,7 @@ async fn execute_inner(root:&std::path::Path,argv:Vec<String>,timeout_seconds:u6
 }
 
 async fn drain_limited<R>(mut reader:R,limit:usize,stream:Option<StreamMeta>,channel:&'static str)->std::io::Result<(Vec<u8>,bool)> where R:AsyncRead+Unpin{
-    let mut output=Vec::new();let mut truncated=false;let mut buffer=[0u8;8192];loop{let read=reader.read(&mut buffer).await?;if read==0{break;}if let Some(meta)=&stream{let chunk=String::from_utf8_lossy(&buffer[..read]).into_owned();meta.events.emit(format!("job.{channel}"),Some(&meta.workspace),format!("{} {channel}",meta.job_id),serde_json::json!({"job_id":meta.job_id,"chunk":chunk})).await;}if output.len()<limit{let remaining=limit-output.len();output.extend_from_slice(&buffer[..read.min(remaining)]);if read>remaining{truncated=true;}}else{truncated=true;}}Ok((output,truncated))
+    let mut output=Vec::new();let mut truncated=false;let mut buffer=[0u8;8192];loop{let read=reader.read(&mut buffer).await?;if read==0{break;}if let Some(meta)=&stream{let chunk=String::from_utf8_lossy(&buffer[..read]).into_owned();meta.events.emit(format!("job.{channel}"),Some(&meta.workspace),format!("{} {channel}",meta.job_id),serde_json::json!({"job_id":meta.job_id.clone(),"chunk":chunk})).await;}if output.len()<limit{let remaining=limit-output.len();output.extend_from_slice(&buffer[..read.min(remaining)]);if read>remaining{truncated=true;}}else{truncated=true;}}Ok((output,truncated))
 }
 
 fn command_workspace<'a>(state:&'a AppState,name:&str)->Result<&'a WorkspaceConfig,ApiError>{let ws=state.config.workspaces.get(name).ok_or_else(||ApiError::NotFound(format!("workspace {name:?} is not configured")))?;if !ws.capabilities.commands{return Err(ApiError::Forbidden(format!("workspace {name:?} does not allow command execution")));}Ok(ws)}
