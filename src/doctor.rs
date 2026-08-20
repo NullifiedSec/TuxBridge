@@ -3,7 +3,7 @@ use std::{fs, process::Command};
 use axum::{extract::State, Json};
 use serde::Serialize;
 
-use crate::{state::AppState, system::command_exists};
+use crate::{security::SecurityProfile, state::AppState, system::command_exists};
 
 #[derive(Debug, Serialize)]
 pub struct DoctorResponse {
@@ -20,11 +20,7 @@ pub struct DoctorCheck {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CheckStatus {
-    Ok,
-    Warning,
-    Error,
-}
+pub enum CheckStatus { Ok, Warning, Error }
 
 pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
     let mut checks = Vec::new();
@@ -34,19 +30,35 @@ pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
         checks.push(DoctorCheck {
             name: format!("tool:{tool}"),
             status: if available { CheckStatus::Ok } else { CheckStatus::Warning },
-            message: if available {
-                format!("{tool} is available")
-            } else {
-                format!("{tool} is not available on PATH")
-            },
+            message: if available { format!("{tool} is available") } else { format!("{tool} is not available on PATH") },
         });
     }
+
+    let (profile_status, profile_message) = match state.config.security.profile {
+        SecurityProfile::Default => (
+            CheckStatus::Ok,
+            format!("default profile active; constrained commands: {}", state.config.security.default_command_allowlist.join(", ")),
+        ),
+        SecurityProfile::Loose => (
+            CheckStatus::Warning,
+            "loose profile active; raw shell and general command APIs have the full permissions of the TuxBridge Unix account".into(),
+        ),
+        SecurityProfile::IWantToNukeMyServer => (
+            CheckStatus::Warning,
+            "i_want_to_nuke_my_server profile active; installer is expected to grant passwordless sudo, so the API key must be treated as a root credential".into(),
+        ),
+    };
+    checks.push(DoctorCheck {
+        name: "security-profile".into(),
+        status: profile_status,
+        message: profile_message,
+    });
 
     if effective_uid().is_some_and(|uid| uid == 0) {
         checks.push(DoctorCheck {
             name: "service-user".into(),
             status: CheckStatus::Warning,
-            message: "TuxBridge is running as root; use a dedicated low-privilege service user".into(),
+            message: "TuxBridge is running as root; use the dedicated tuxbridge service account".into(),
         });
     } else {
         checks.push(DoctorCheck {
@@ -79,11 +91,7 @@ pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
                     status: CheckStatus::Ok,
                     message: format!("{} is accessible", root.display()),
                 });
-
-                if workspace.capabilities.git_read
-                    || workspace.capabilities.git_write
-                    || workspace.capabilities.git_network
-                {
+                if workspace.capabilities.git_read || workspace.capabilities.git_write || workspace.capabilities.git_network {
                     checks.push(check_git_workspace(name, &root));
                 }
                 if workspace.capabilities.git_write || workspace.capabilities.git_network {
@@ -112,10 +120,7 @@ pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
             Ok(root) if root.is_dir() => checks.push(DoctorCheck {
                 name: format!("user-files:{name}"),
                 status: CheckStatus::Ok,
-                message: format!(
-                    "{} is accessible (read={}, write={})",
-                    root.display(), mount.read, mount.write
-                ),
+                message: format!("{} is accessible (read={}, write={})", root.display(), mount.read, mount.write),
             }),
             Ok(root) => checks.push(DoctorCheck {
                 name: format!("user-files:{name}"),
@@ -130,9 +135,7 @@ pub async fn doctor(State(state): State<AppState>) -> Json<DoctorResponse> {
         }
     }
 
-    let ok = !checks
-        .iter()
-        .any(|check| matches!(check.status, CheckStatus::Error));
+    let ok = !checks.iter().any(|check| matches!(check.status, CheckStatus::Error));
     Json(DoctorResponse { ok, checks })
 }
 
@@ -145,22 +148,12 @@ fn check_git_workspace(name: &str, root: &std::path::Path) -> DoctorCheck {
         };
     }
 
-    match Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
-    {
-        Ok(output)
-            if output.status.success()
-                && String::from_utf8_lossy(&output.stdout).trim() == "true" =>
-        {
-            DoctorCheck {
-                name: format!("workspace:{name}:git"),
-                status: CheckStatus::Ok,
-                message: "workspace is a Git work tree".into(),
-            }
-        }
+    match Command::new("git").arg("-C").arg(root).args(["rev-parse", "--is-inside-work-tree"]).output() {
+        Ok(output) if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" => DoctorCheck {
+            name: format!("workspace:{name}:git"),
+            status: CheckStatus::Ok,
+            message: "workspace is a Git work tree".into(),
+        },
         Ok(output) => DoctorCheck {
             name: format!("workspace:{name}:git"),
             status: CheckStatus::Error,
