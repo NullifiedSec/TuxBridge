@@ -22,6 +22,7 @@ mod git_mutation;
 mod hardening;
 mod mutation;
 mod project;
+mod raw_command;
 mod security;
 mod state;
 mod system;
@@ -85,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/user-files/patch", post(user_files::patch_file))
         .route("/v1/project/inspect", post(project::inspect_project))
         .route("/v1/commands/run", post(command::run_command))
-        .route("/v1/commands/raw", post(command::run_raw_command))
+        .route("/v1/commands/raw", post(raw_command::run_raw_command))
         .route("/v1/commands/start", post(command::start_command))
         .route(
             "/v1/jobs/{id}",
