@@ -11,6 +11,7 @@ use crate::{
     command::JobStore,
     config::{AuthRole, Config, ConfigError},
     events::EventHub,
+    role_policy::RolePolicy,
     sessions::SessionStore,
 };
 
@@ -31,6 +32,7 @@ pub struct AppState {
     pub approvals: ApprovalStore,
     pub request_gate: Arc<Semaphore>,
     pub principals: Arc<[PrincipalCredential]>,
+    pub role_policy: RolePolicy,
     request_sequence: Arc<AtomicU64>,
 }
 
@@ -45,6 +47,8 @@ impl AppState {
                 roles: Arc::from(principal.roles),
             })
             .collect::<Vec<_>>();
+        let role_policy = RolePolicy::embedded()
+            .map_err(|error| ConfigError::Invalid(format!("embedded role policy is invalid: {error}")))?;
         let jobs = JobStore::new(
             config.limits.max_jobs,
             config.limits.job_retention_seconds,
@@ -60,6 +64,7 @@ impl AppState {
             approvals: ApprovalStore::default(),
             request_gate,
             principals: Arc::from(principals),
+            role_policy,
             request_sequence: Arc::new(AtomicU64::new(0)),
         })
     }
