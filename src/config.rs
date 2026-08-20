@@ -6,12 +6,16 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::security::SecurityProfile;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub security: SecurityConfig,
     #[serde(default)]
     pub limits: LimitsConfig,
     #[serde(default)]
@@ -44,6 +48,23 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             api_key_env: default_api_key_env(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SecurityConfig {
+    #[serde(default)]
+    pub profile: SecurityProfile,
+    #[serde(default = "default_command_allowlist")]
+    pub default_command_allowlist: Vec<String>,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            profile: SecurityProfile::Default,
+            default_command_allowlist: default_command_allowlist(),
         }
     }
 }
@@ -89,27 +110,19 @@ pub struct WorkspaceConfig {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Capabilities {
-    #[serde(default)]
-    pub fs_read: bool,
-    #[serde(default)]
-    pub fs_write: bool,
-    #[serde(default)]
-    pub commands: bool,
-    #[serde(default)]
-    pub git_read: bool,
-    #[serde(default)]
-    pub git_write: bool,
-    #[serde(default)]
-    pub git_network: bool,
+    #[serde(default)] pub fs_read: bool,
+    #[serde(default)] pub fs_write: bool,
+    #[serde(default)] pub commands: bool,
+    #[serde(default)] pub git_read: bool,
+    #[serde(default)] pub git_write: bool,
+    #[serde(default)] pub git_network: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserFilesConfig {
     pub root: PathBuf,
-    #[serde(default)]
-    pub read: bool,
-    #[serde(default)]
-    pub write: bool,
+    #[serde(default)] pub read: bool,
+    #[serde(default)] pub write: bool,
 }
 
 impl Config {
@@ -141,6 +154,22 @@ impl Config {
         }
         if self.auth.api_key_env.trim().is_empty() {
             return Err(ConfigError::Invalid("auth.api_key_env must not be empty".into()));
+        }
+        if self.security.default_command_allowlist.is_empty() {
+            return Err(ConfigError::Invalid(
+                "security.default_command_allowlist must not be empty".into(),
+            ));
+        }
+        for program in &self.security.default_command_allowlist {
+            if program.trim().is_empty()
+                || program.starts_with('-')
+                || program.contains('/')
+                || program.chars().any(char::is_whitespace)
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "invalid default command allowlist entry {program:?}"
+                )));
+            }
         }
         if self.limits.max_body_bytes < 1024 || self.limits.max_body_bytes > 64 * 1024 * 1024 {
             return Err(ConfigError::Invalid(
@@ -210,6 +239,15 @@ fn default_max_command_timeout() -> u64 { 900 }
 fn default_command_output_bytes() -> usize { 2 * 1024 * 1024 }
 fn default_max_jobs() -> usize { 128 }
 fn default_job_retention_seconds() -> u64 { 3600 }
+fn default_command_allowlist() -> Vec<String> {
+    [
+        "pwd", "ls", "find", "cat", "head", "tail", "wc", "grep", "rg", "git", "cargo",
+        "rustc", "node", "npm", "bun", "go", "python3",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -261,5 +299,7 @@ mod tests {
         assert_eq!(config.server.listen, "127.0.0.1:8787");
         assert_eq!(config.auth.api_key_env, "TUXBRIDGE_API_KEY");
         assert_eq!(config.limits.max_in_flight, 32);
+        assert_eq!(config.security.profile, SecurityProfile::Default);
+        assert!(config.security.default_command_allowlist.iter().any(|v| v == "git"));
     }
 }
