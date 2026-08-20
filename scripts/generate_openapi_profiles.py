@@ -20,6 +20,7 @@ import copy
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = ROOT / "openapi.yaml"
@@ -80,6 +81,37 @@ def validate_manifest(profile: str, spec: dict, index: dict[str, tuple[str, str]
         if method not in METHODS or not path.startswith("/v1/") or any(ch.isspace() for ch in path):
             raise SystemExit(f"profile {profile!r} has invalid support route {route!r}")
     return wanted_ids
+
+
+def validate_server_url(value: str) -> str:
+    """Accept only a clean HTTPS origin suitable for GPT Actions."""
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in ("", "/")
+    ):
+        raise SystemExit(
+            "--server-url must be a plain HTTPS origin such as https://tuxbridge.example.com"
+        )
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise SystemExit(f"invalid --server-url port: {error}") from error
+    host = parsed.hostname.lower()
+    if parsed.hostname != parsed.netloc.split(":")[0].strip("[]") and ":" not in host:
+        # urlsplit already validates the structural pieces; this merely keeps the
+        # normalized output from preserving surprising host casing.
+        pass
+    if ":" in host:
+        rendered_host = f"[{host}]"
+    else:
+        rendered_host = host
+    return f"https://{rendered_host}{f':{port}' if port is not None else ''}"
 
 
 def _resolve_local_schema_ref(ref: str, schemas: dict) -> dict:
@@ -161,7 +193,7 @@ def make_gpt_actions_compatible(spec: dict) -> None:
             schemas[name] = _flatten_object_schema(schema, schemas)
 
 
-def generate(profile: str, wanted_ids: list[str], canonical: dict) -> dict:
+def generate(profile: str, wanted_ids: list[str], canonical: dict, server_url: str | None) -> dict:
     wanted = set(wanted_ids)
     paths: dict = {}
     for path, path_item in canonical.get("paths", {}).items():
@@ -182,7 +214,7 @@ def generate(profile: str, wanted_ids: list[str], canonical: dict) -> dict:
             "version": canonical.get("info", {}).get("version", "0.1.0"),
             "description": f"Role-scoped TuxBridge Action surface for the {profile} occupation.",
         },
-        "servers": copy.deepcopy(canonical.get("servers", [])),
+        "servers": [{"url": server_url}] if server_url else copy.deepcopy(canonical.get("servers", [])),
         "security": copy.deepcopy(canonical.get("security", [])),
         "paths": paths,
         "components": copy.deepcopy(canonical.get("components", {})),
@@ -266,7 +298,14 @@ def check_committed(profile: str, wanted_ids: list[str], index: dict[str, tuple[
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="validate committed profile route mappings")
+    parser.add_argument(
+        "--server-url",
+        help="override generated servers[0].url with a plain HTTPS origin",
+    )
     args = parser.parse_args()
+    if args.check and args.server_url:
+        parser.error("--server-url cannot be combined with --check")
+    server_url = validate_server_url(args.server_url) if args.server_url else None
     canonical = load_json(CANONICAL)
     profiles = load_json(PROFILES)
     index = canonical_index(canonical)
@@ -275,10 +314,11 @@ def main() -> None:
         if args.check:
             check_committed(profile, operation_ids, index)
         else:
-            spec = generate(profile, operation_ids, canonical)
+            spec = generate(profile, operation_ids, canonical, server_url)
             output = ROOT / f"openapi-{profile}.yaml"
             output.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
-            print(f"{output.name}: generated {operation_count(spec)} operations")
+            suffix = f" using {server_url}" if server_url else ""
+            print(f"{output.name}: generated {operation_count(spec)} operations{suffix}")
 
 
 if __name__ == "__main__":
