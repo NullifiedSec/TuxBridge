@@ -10,18 +10,12 @@ use crate::security::SecurityProfile;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    #[serde(default)]
-    pub server: ServerConfig,
-    #[serde(default)]
-    pub auth: AuthConfig,
-    #[serde(default)]
-    pub security: SecurityConfig,
-    #[serde(default)]
-    pub limits: LimitsConfig,
-    #[serde(default)]
-    pub workspaces: BTreeMap<String, WorkspaceConfig>,
-    #[serde(default)]
-    pub user_files: BTreeMap<String, UserFilesConfig>,
+    #[serde(default)] pub server: ServerConfig,
+    #[serde(default)] pub auth: AuthConfig,
+    #[serde(default)] pub security: SecurityConfig,
+    #[serde(default)] pub limits: LimitsConfig,
+    #[serde(default)] pub workspaces: BTreeMap<String, WorkspaceConfig>,
+    #[serde(default)] pub user_files: BTreeMap<String, UserFilesConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -29,13 +23,8 @@ pub struct ServerConfig {
     #[serde(default = "default_listen")]
     pub listen: String,
 }
-
 impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            listen: default_listen(),
-        }
-    }
+    fn default() -> Self { Self { listen: default_listen() } }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -43,13 +32,8 @@ pub struct AuthConfig {
     #[serde(default = "default_api_key_env")]
     pub api_key_env: String,
 }
-
 impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            api_key_env: default_api_key_env(),
-        }
-    }
+    fn default() -> Self { Self { api_key_env: default_api_key_env() } }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -59,7 +43,6 @@ pub struct SecurityConfig {
     #[serde(default = "default_command_allowlist")]
     pub default_command_allowlist: Vec<String>,
 }
-
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
@@ -71,22 +54,14 @@ impl Default for SecurityConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LimitsConfig {
-    #[serde(default = "default_max_body_bytes")]
-    pub max_body_bytes: usize,
-    #[serde(default = "default_max_in_flight")]
-    pub max_in_flight: usize,
-    #[serde(default = "default_command_timeout")]
-    pub command_timeout_seconds: u64,
-    #[serde(default = "default_max_command_timeout")]
-    pub max_command_timeout_seconds: u64,
-    #[serde(default = "default_command_output_bytes")]
-    pub command_output_bytes: usize,
-    #[serde(default = "default_max_jobs")]
-    pub max_jobs: usize,
-    #[serde(default = "default_job_retention_seconds")]
-    pub job_retention_seconds: u64,
+    #[serde(default = "default_max_body_bytes")] pub max_body_bytes: usize,
+    #[serde(default = "default_max_in_flight")] pub max_in_flight: usize,
+    #[serde(default = "default_command_timeout")] pub command_timeout_seconds: u64,
+    #[serde(default = "default_max_command_timeout")] pub max_command_timeout_seconds: u64,
+    #[serde(default = "default_command_output_bytes")] pub command_output_bytes: usize,
+    #[serde(default = "default_max_jobs")] pub max_jobs: usize,
+    #[serde(default = "default_job_retention_seconds")] pub job_retention_seconds: u64,
 }
-
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
@@ -104,8 +79,7 @@ impl Default for LimitsConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorkspaceConfig {
     pub root: PathBuf,
-    #[serde(default)]
-    pub capabilities: Capabilities,
+    #[serde(default)] pub capabilities: Capabilities,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -128,8 +102,7 @@ pub struct UserFilesConfig {
 impl Config {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let raw = fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
+            path: path.to_path_buf(), source,
         })?;
         let config: Self = toml::from_str(&raw).map_err(ConfigError::Parse)?;
         config.validate()?;
@@ -156,75 +129,45 @@ impl Config {
             return Err(ConfigError::Invalid("auth.api_key_env must not be empty".into()));
         }
         if self.security.default_command_allowlist.is_empty() {
-            return Err(ConfigError::Invalid(
-                "security.default_command_allowlist must not be empty".into(),
-            ));
+            return Err(ConfigError::Invalid("security.default_command_allowlist must not be empty".into()));
         }
         for program in &self.security.default_command_allowlist {
-            if program.trim().is_empty()
-                || program.starts_with('-')
-                || program.contains('/')
-                || program.chars().any(char::is_whitespace)
-            {
-                return Err(ConfigError::Invalid(format!(
-                    "invalid default command allowlist entry {program:?}"
-                )));
+            if program.trim().is_empty() || program.starts_with('-') || program.contains('/') || program.chars().any(char::is_whitespace) {
+                return Err(ConfigError::Invalid(format!("invalid default command allowlist entry {program:?}")));
             }
         }
         if self.limits.max_body_bytes < 1024 || self.limits.max_body_bytes > 64 * 1024 * 1024 {
-            return Err(ConfigError::Invalid(
-                "limits.max_body_bytes must be between 1024 and 67108864".into(),
-            ));
+            return Err(ConfigError::Invalid("limits.max_body_bytes must be between 1024 and 67108864".into()));
         }
         if self.limits.max_in_flight == 0 || self.limits.max_in_flight > 1024 {
-            return Err(ConfigError::Invalid(
-                "limits.max_in_flight must be between 1 and 1024".into(),
-            ));
+            return Err(ConfigError::Invalid("limits.max_in_flight must be between 1 and 1024".into()));
         }
         if self.limits.command_timeout_seconds == 0
             || self.limits.max_command_timeout_seconds == 0
             || self.limits.command_timeout_seconds > self.limits.max_command_timeout_seconds
             || self.limits.max_command_timeout_seconds > 3600
         {
-            return Err(ConfigError::Invalid(
-                "command timeout limits are invalid or exceed one hour".into(),
-            ));
+            return Err(ConfigError::Invalid("command timeout limits are invalid or exceed one hour".into()));
         }
-        if self.limits.command_output_bytes == 0
-            || self.limits.command_output_bytes > 16 * 1024 * 1024
-        {
-            return Err(ConfigError::Invalid(
-                "limits.command_output_bytes must be between 1 and 16777216".into(),
-            ));
+        if self.limits.command_output_bytes == 0 || self.limits.command_output_bytes > 16 * 1024 * 1024 {
+            return Err(ConfigError::Invalid("limits.command_output_bytes must be between 1 and 16777216".into()));
         }
         if self.limits.max_jobs == 0 || self.limits.max_jobs > 4096 {
-            return Err(ConfigError::Invalid(
-                "limits.max_jobs must be between 1 and 4096".into(),
-            ));
+            return Err(ConfigError::Invalid("limits.max_jobs must be between 1 and 4096".into()));
         }
-
         validate_roots("workspace", self.workspaces.iter().map(|(name, cfg)| (name, &cfg.root)))?;
-        validate_roots(
-            "user-files mount",
-            self.user_files.iter().map(|(name, cfg)| (name, &cfg.root)),
-        )?;
-
+        validate_roots("user-files mount", self.user_files.iter().map(|(name, cfg)| (name, &cfg.root)))?;
         Ok(())
     }
 }
 
-fn validate_roots<'a>(
-    kind: &str,
-    roots: impl Iterator<Item = (&'a String, &'a PathBuf)>,
-) -> Result<(), ConfigError> {
+fn validate_roots<'a>(kind: &str, roots: impl Iterator<Item = (&'a String, &'a PathBuf)>) -> Result<(), ConfigError> {
     for (name, root) in roots {
         if name.trim().is_empty() {
             return Err(ConfigError::Invalid(format!("{kind} names must not be empty")));
         }
         if !root.is_absolute() {
-            return Err(ConfigError::Invalid(format!(
-                "{kind} {name:?} root must be an absolute path"
-            )));
+            return Err(ConfigError::Invalid(format!("{kind} {name:?} root must be an absolute path")));
         }
     }
     Ok(())
@@ -240,13 +183,8 @@ fn default_command_output_bytes() -> usize { 2 * 1024 * 1024 }
 fn default_max_jobs() -> usize { 128 }
 fn default_job_retention_seconds() -> u64 { 3600 }
 fn default_command_allowlist() -> Vec<String> {
-    [
-        "pwd", "ls", "find", "cat", "head", "tail", "wc", "grep", "rg", "git", "cargo",
-        "rustc", "node", "npm", "bun", "go", "python3",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
+    ["pwd", "ls", "cat", "head", "tail", "wc", "grep", "stat", "du", "df", "uname", "id", "whoami"]
+        .into_iter().map(str::to_owned).collect()
 }
 
 #[derive(Debug)]
@@ -256,7 +194,6 @@ pub enum ConfigError {
     MissingSecret(String),
     Invalid(String),
 }
-
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -267,7 +204,6 @@ impl std::fmt::Display for ConfigError {
         }
     }
 }
-
 impl std::error::Error for ConfigError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -300,6 +236,7 @@ mod tests {
         assert_eq!(config.auth.api_key_env, "TUXBRIDGE_API_KEY");
         assert_eq!(config.limits.max_in_flight, 32);
         assert_eq!(config.security.profile, SecurityProfile::Default);
-        assert!(config.security.default_command_allowlist.iter().any(|v| v == "git"));
+        assert!(config.security.default_command_allowlist.iter().any(|v| v == "ls"));
+        assert!(!config.security.default_command_allowlist.iter().any(|v| v == "python3"));
     }
 }
