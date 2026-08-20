@@ -106,15 +106,39 @@ def generate(profile: str, wanted_ids: list[str], canonical: dict) -> dict:
     return result
 
 
+def routes_from_json(spec: dict, source: Path) -> dict[str, tuple[str, str]]:
+    found: dict[str, tuple[str, str]] = {}
+    for path, path_item in spec.get("paths", {}).items():
+        if not isinstance(path_item, dict):
+            continue
+        for method, operation in path_item.items():
+            if method.lower() not in METHODS or not isinstance(operation, dict):
+                continue
+            operation_id = operation.get("operationId")
+            if not operation_id:
+                continue
+            if operation_id in found:
+                raise SystemExit(f"{source.name}: duplicate operationId {operation_id!r}")
+            found[operation_id] = (path, method.lower())
+    return found
+
+
 def parse_profile_routes(path: Path) -> dict[str, tuple[str, str]]:
-    """Parse only path/method/operationId indentation from committed YAML."""
+    """Parse route metadata from either generated JSON or committed YAML."""
+    text = path.read_text(encoding="utf-8")
+    if text.lstrip().startswith("{"):
+        try:
+            return routes_from_json(json.loads(text), path)
+        except json.JSONDecodeError as error:
+            raise SystemExit(f"{path.name}: invalid JSON-compatible schema: {error}") from error
+
     current_path = None
     current_method = None
     found: dict[str, tuple[str, str]] = {}
     path_re = re.compile(r"^  (/[^:]+):\s*$")
     method_re = re.compile(r"^    (get|put|post|delete|patch|head|options|trace):\s*$")
     op_re = re.compile(r"^      operationId:\s*([A-Za-z0-9_.-]+)\s*$")
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if match := path_re.match(line):
             current_path, current_method = match.group(1), None
             continue
