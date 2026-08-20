@@ -1,0 +1,279 @@
+openapi: 3.1.0
+info:
+  title: TuxBridge Ops GPT API
+  version: 0.1.0
+  description: Host operations and supervision surface. Use with TUXBRIDGE_OPS_API_KEY.
+servers:
+  - url: https://tuxbridge.example.com
+security:
+  - bearerAuth: []
+paths:
+  /v1/dashboard:
+    get:
+      operationId: getDashboardInfo
+      summary: Get Mission Control metadata.
+      responses: { '200': { description: Dashboard metadata. } }
+  /v1/events:
+    get:
+      operationId: listAgentEvents
+      summary: List typed in-memory agent activity events.
+      responses: { '200': { description: Agent activity. } }
+  /v1/approvals:
+    get:
+      operationId: listApprovals
+      summary: List pending and historical operator approvals.
+      responses: { '200': { description: Approvals. } }
+  /v1/approvals/{id}/approve:
+    post:
+      operationId: approveOperation
+      summary: Approve one pending operator-gated operation.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Approved operation. } }
+  /v1/approvals/{id}/deny:
+    post:
+      operationId: denyOperation
+      summary: Deny one pending operator-gated operation.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Denied operation. } }
+  /v1/security/profile:
+    get:
+      operationId: getSecurityProfile
+      summary: Get the active TuxBridge security profile.
+      responses: { '200': { description: Security profile. } }
+  /v1/system:
+    get:
+      operationId: getSystemInfo
+      summary: Inspect safe host metadata and development-tool availability.
+      responses: { '200': { description: System information. } }
+  /v1/system/tool-versions:
+    get:
+      operationId: getToolVersions
+      summary: Probe bounded version output for common development tools.
+      responses: { '200': { description: Tool versions. } }
+  /v1/system/processes:
+    get:
+      operationId: listProcesses
+      summary: List bounded process metadata without command lines or environment variables.
+      responses: { '200': { description: Process metadata. } }
+  /v1/system/listeners:
+    get:
+      operationId: listTcpListeners
+      summary: List TCP listening sockets.
+      responses: { '200': { description: TCP listeners. } }
+  /v1/system/disks:
+    get:
+      operationId: getDiskUsage
+      summary: Inspect mounted filesystem capacity and free space.
+      responses: { '200': { description: Disk usage. } }
+  /v1/doctor:
+    get:
+      operationId: runDoctor
+      summary: Diagnose tools, service safety, workspaces, mounts, and Git readiness.
+      responses: { '200': { description: Diagnostic report. } }
+  /v1/workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List configured workspaces and capabilities.
+      responses: { '200': { description: Workspace summaries. } }
+  /v1/fs/list:
+    post:
+      operationId: listDirectory
+      summary: List a readable workspace directory.
+      requestBody: { $ref: '#/components/requestBodies/PathBody' }
+      responses: { '200': { description: Directory entries. } }
+  /v1/fs/stat:
+    post:
+      operationId: statPath
+      summary: Stat a readable workspace path.
+      requestBody: { $ref: '#/components/requestBodies/PathBody' }
+      responses: { '200': { description: Path metadata. } }
+  /v1/fs/read:
+    post:
+      operationId: readFile
+      summary: Read bounded UTF-8 text from a workspace file.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReadRequest' } } }
+      responses: { '200': { description: File content. } }
+  /v1/fs/search:
+    post:
+      operationId: searchFiles
+      summary: Search bounded workspace text without following symlinks.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SearchRequest' } } }
+      responses: { '200': { description: Search results. } }
+  /v1/fs/hash:
+    post:
+      operationId: hashFile
+      summary: Compute full-file SHA-256 before mutation.
+      requestBody: { $ref: '#/components/requestBodies/FileBody' }
+      responses: { '200': { description: File hash. } }
+  /v1/fs/write:
+    post:
+      operationId: writeFile
+      summary: Atomically create or hash-guardedly replace a workspace file.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WriteRequest' } } }
+      responses:
+        '200': { description: Mutation result. }
+        '409': { description: Existing target or stale hash. }
+  /v1/fs/patch:
+    post:
+      operationId: patchFile
+      summary: Hash-guardedly patch exactly one text occurrence.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PatchRequest' } } }
+      responses:
+        '200': { description: Mutation result. }
+        '409': { description: Stale hash or ambiguous patch. }
+  /v1/commands/run:
+    post:
+      operationId: runCommand
+      summary: Run one argv-based synchronous command.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CommandRequest' } } }
+      responses: { '200': { description: Command result. }, '403': { description: Blocked by profile or capability. } }
+  /v1/commands/raw:
+    post:
+      operationId: runRawCommand
+      summary: Run a profile-aware raw command string.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RawCommandRequest' } } }
+      responses: { '200': { description: Command result. }, '403': { description: Blocked by profile or capability. } }
+  /v1/commands/start:
+    post:
+      operationId: startCommand
+      summary: Start a cancellable background command.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CommandRequest' } } }
+      responses: { '200': { description: Initial job snapshot. }, '403': { description: Blocked by profile or capability. } }
+  /v1/jobs:
+    get:
+      operationId: listCommandJobs
+      summary: List background command jobs and structured diagnostics.
+      responses: { '200': { description: Job snapshots. } }
+  /v1/jobs/{id}:
+    get:
+      operationId: getCommandJob
+      summary: Inspect one background command job.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Job snapshot. } }
+    delete:
+      operationId: cancelCommandJob
+      summary: Request cancellation of a running background job.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Job snapshot. } }
+  /v1/git/status:
+    post:
+      operationId: gitStatus
+      summary: Read structured Git working-tree status.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Git status. } }
+  /v1/git/branches:
+    post:
+      operationId: gitBranches
+      summary: List local Git branches and upstream state.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Branches. } }
+  /v1/git/fetch:
+    post:
+      operationId: gitFetch
+      summary: Fetch configured remotes and prune stale refs.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Git result. } }
+  /v1/git/pull:
+    post:
+      operationId: gitPull
+      summary: Clean-tree fast-forward-only pull.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Git result. }, '409': { description: Dirty worktree or non-fast-forward state. } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  requestBodies:
+    WorkspaceBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceRequest' } } }
+    PathBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/PathRequest' } } }
+    FileBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/FileRequest' } } }
+  schemas:
+    WorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string, minLength: 1 } }
+    PathRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string, minLength: 1 }, path: { type: string, default: '' } }
+    FileRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties: { workspace: { type: string }, path: { type: string } }
+    ReadRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        start_line: { type: integer, minimum: 1 }
+        end_line: { type: integer, minimum: 1 }
+        max_bytes: { type: integer, minimum: 1, maximum: 8388608 }
+    SearchRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, query]
+      properties:
+        workspace: { type: string }
+        path: { type: string, default: '' }
+        query: { type: string, minLength: 1 }
+        max_results: { type: integer, minimum: 1, maximum: 1000 }
+    WriteRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path, mode, content]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        mode: { type: string, enum: [create, replace] }
+        content: { type: string }
+        expected_sha256: { type: string, minLength: 64, maxLength: 64 }
+    PatchRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path, expected_sha256, old, new]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        expected_sha256: { type: string, minLength: 64, maxLength: 64 }
+        old: { type: string, minLength: 1 }
+        new: { type: string }
+    CommandRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, argv]
+      properties:
+        workspace: { type: string }
+        argv: { type: array, minItems: 1, maxItems: 256, items: { type: string } }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+    RawCommandRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, command]
+      properties:
+        workspace: { type: string }
+        command: { type: string, minLength: 1, maxLength: 16384 }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
