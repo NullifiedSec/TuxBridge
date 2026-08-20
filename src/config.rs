@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::security::SecurityProfile;
 
@@ -14,6 +15,7 @@ pub struct Config {
     #[serde(default)] pub auth: AuthConfig,
     #[serde(default)] pub security: SecurityConfig,
     #[serde(default)] pub limits: LimitsConfig,
+    #[serde(default)] pub lsp: LspConfig,
     #[serde(default)] pub workspaces: BTreeMap<String, WorkspaceConfig>,
     #[serde(default)] pub user_files: BTreeMap<String, UserFilesConfig>,
 }
@@ -76,6 +78,23 @@ impl Default for LimitsConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct LspConfig {
+    #[serde(default)]
+    pub servers: BTreeMap<String, LspServerConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LspServerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    pub language_id: Option<String>,
+    pub initialization_options: Option<Value>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorkspaceConfig {
     pub root: PathBuf,
@@ -136,6 +155,20 @@ impl Config {
                 return Err(ConfigError::Invalid(format!("invalid default command allowlist entry {program:?}")));
             }
         }
+        for (name, server) in &self.lsp.servers {
+            if name.trim().is_empty() {
+                return Err(ConfigError::Invalid("LSP server names must not be empty".into()));
+            }
+            if server.argv.is_empty() || server.argv[0].trim().is_empty() {
+                return Err(ConfigError::Invalid(format!("LSP server {name:?} must define a non-empty argv")));
+            }
+            if server.argv.iter().any(|arg| arg.as_bytes().contains(&0)) {
+                return Err(ConfigError::Invalid(format!("LSP server {name:?} argv contains a NUL byte")));
+            }
+            if server.extensions.iter().any(|ext| ext.trim_matches('.').is_empty() || ext.chars().any(char::is_whitespace)) {
+                return Err(ConfigError::Invalid(format!("LSP server {name:?} has an invalid extension mapping")));
+            }
+        }
         if self.limits.max_body_bytes < 1024 || self.limits.max_body_bytes > 64 * 1024 * 1024 {
             return Err(ConfigError::Invalid("limits.max_body_bytes must be between 1024 and 67108864".into()));
         }
@@ -182,6 +215,7 @@ fn default_max_command_timeout() -> u64 { 900 }
 fn default_command_output_bytes() -> usize { 2 * 1024 * 1024 }
 fn default_max_jobs() -> usize { 128 }
 fn default_job_retention_seconds() -> u64 { 3600 }
+fn default_true() -> bool { true }
 fn default_command_allowlist() -> Vec<String> {
     ["pwd", "ls", "cat", "head", "tail", "wc", "grep", "stat", "du", "df", "uname", "id", "whoami"]
         .into_iter().map(str::to_owned).collect()
@@ -238,5 +272,6 @@ mod tests {
         assert_eq!(config.security.profile, SecurityProfile::Default);
         assert!(config.security.default_command_allowlist.iter().any(|v| v == "ls"));
         assert!(!config.security.default_command_allowlist.iter().any(|v| v == "python3"));
+        assert!(config.lsp.servers.is_empty());
     }
 }
