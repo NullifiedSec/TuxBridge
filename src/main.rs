@@ -22,6 +22,7 @@ mod git_mutation;
 mod hardening;
 mod mutation;
 mod project;
+mod security;
 mod state;
 mod system;
 mod user_files;
@@ -66,10 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/workspaces", get(workspace::list_workspaces))
         .route("/v1/workspaces/{name}", get(workspace::get_workspace))
         .route("/v1/workspaces/resolve", post(workspace::resolve_path))
-        .route(
-            "/v1/workspaces/tree-summary",
-            post(bonus::workspace_tree_summary),
-        )
+        .route("/v1/workspaces/tree-summary", post(bonus::workspace_tree_summary))
         .route("/v1/fs/list", post(fs::list_directory))
         .route("/v1/fs/stat", post(fs::stat_path))
         .route("/v1/fs/read", post(fs::read_file))
@@ -87,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/user-files/patch", post(user_files::patch_file))
         .route("/v1/project/inspect", post(project::inspect_project))
         .route("/v1/commands/run", post(command::run_command))
+        .route("/v1/commands/raw", post(command::run_raw_command))
         .route("/v1/commands/start", post(command::start_command))
         .route(
             "/v1/jobs/{id}",
