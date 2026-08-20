@@ -18,6 +18,27 @@ command_output_bytes = 2097152
 max_jobs = 128
 job_retention_seconds = 3600
 
+# TuxBridge has built-in executable mappings for rust-analyzer, gopls,
+# typescript-language-server, pyright-langserver, intelephense, jdtls, and
+# kotlin-language-server. Add/override servers here when you want custom argv,
+# extensions, language IDs, or initialization options.
+#
+# [lsp.servers.clangd]
+# enabled = true
+# argv = ["clangd", "--background-index", "--clang-tidy"]
+# extensions = ["c", "h", "cc", "cpp", "cxx", "hpp"]
+# language_id = "cpp"
+#
+# [lsp.servers.vue]
+# enabled = true
+# argv = ["vue-language-server", "--stdio"]
+# extensions = ["vue"]
+# language_id = "vue"
+#
+# Initialization options may be expressed as nested TOML tables, e.g.
+# [lsp.servers.example.initialization_options]
+# someFlag = true
+
 [workspaces.example]
 root = "/absolute/path/to/workspace"
 
