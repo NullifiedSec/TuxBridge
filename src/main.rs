@@ -10,12 +10,14 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 
 mod auth;
+mod bonus;
 mod command;
 mod config;
 mod doctor;
 mod error;
 mod fs;
 mod git;
+mod git_extra;
 mod git_mutation;
 mod hardening;
 mod mutation;
@@ -56,10 +58,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let protected = Router::new()
         .route("/v1/system", get(system::system_info))
+        .route("/v1/system/tool-versions", get(bonus::tool_versions))
+        .route("/v1/system/processes", get(bonus::processes))
+        .route("/v1/system/listeners", get(bonus::listeners))
+        .route("/v1/system/disks", get(bonus::disks))
         .route("/v1/doctor", get(doctor::doctor))
         .route("/v1/workspaces", get(workspace::list_workspaces))
         .route("/v1/workspaces/{name}", get(workspace::get_workspace))
         .route("/v1/workspaces/resolve", post(workspace::resolve_path))
+        .route(
+            "/v1/workspaces/tree-summary",
+            post(bonus::workspace_tree_summary),
+        )
         .route("/v1/fs/list", post(fs::list_directory))
         .route("/v1/fs/stat", post(fs::stat_path))
         .route("/v1/fs/read", post(fs::read_file))
@@ -86,6 +96,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/git/branches", post(git::git_branches))
         .route("/v1/git/log", post(git::git_log))
         .route("/v1/git/diff", post(git::git_diff))
+        .route("/v1/git/head", post(git_extra::git_head))
+        .route("/v1/git/remotes", post(git_extra::git_remotes))
+        .route("/v1/git/stashes", post(git_extra::git_stashes))
         .route("/v1/git/fetch", post(git_mutation::git_fetch))
         .route("/v1/git/pull", post(git_mutation::git_pull))
         .route("/v1/git/add", post(git_mutation::git_add))
