@@ -21,6 +21,7 @@ mod git;
 mod git_extra;
 mod git_mutation;
 mod hardening;
+mod lsp;
 mod mutation;
 mod project;
 mod raw_command;
@@ -92,6 +93,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/code/references", post(code_tools::code_references))
         .route("/v1/code/edit-plan", post(code_tools::code_edit_plan))
         .route("/v1/code/tasks", post(code_tools::discover_code_tasks))
+        .route("/v1/lsp/definition", post(lsp::definition))
+        .route("/v1/lsp/references", post(lsp::references))
+        .route("/v1/lsp/hover", post(lsp::hover))
+        .route("/v1/lsp/document-symbols", post(lsp::document_symbols))
+        .route("/v1/lsp/workspace-symbols", post(lsp::workspace_symbols))
+        .route("/v1/lsp/diagnostics", post(lsp::diagnostics))
+        .route("/v1/lsp/rename", post(lsp::rename))
+        .route("/v1/lsp/format", post(lsp::formatting))
         .route("/v1/commands/run", post(command::run_command))
         .route("/v1/commands/raw", post(raw_command::run_raw_command))
         .route("/v1/commands/start", post(command::start_command))
