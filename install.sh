@@ -55,21 +55,43 @@ case "$choice" in
 esac
 
 if id "$USER_NAME" >/dev/null 2>&1; then
-  echo "Refusing to reuse existing user $USER_NAME automatically." >&2
-  echo "Remove/rename that account or install on a host without a pre-existing tuxbridge user." >&2
-  exit 1
+  passwd_line="$(getent passwd "$USER_NAME")"
+  existing_uid="$(cut -d: -f3 <<<"$passwd_line")"
+  existing_home="$(cut -d: -f6 <<<"$passwd_line")"
+  if [[ "$existing_uid" == "0" || "$existing_home" != "$HOME_DIR" ]]; then
+    echo "Existing $USER_NAME account does not match the expected dedicated service account." >&2
+    exit 1
+  fi
+  mapfile -t extra_groups < <(id -nG "$USER_NAME" | tr ' ' '\n' | grep -vx "$USER_NAME" || true)
+  if (( ${#extra_groups[@]} > 0 )); then
+    echo "Existing $USER_NAME account has unexpected supplementary groups: ${extra_groups[*]}" >&2
+    echo "Refusing to reuse a more-privileged account." >&2
+    exit 1
+  fi
+else
+  useradd --create-home --home-dir "$HOME_DIR" --shell /bin/bash "$USER_NAME"
 fi
-useradd --create-home --home-dir "$HOME_DIR" --shell /bin/bash "$USER_NAME"
 
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$HOME_DIR"
 install -d -o root -g "$USER_NAME" -m 0750 "$CONFIG_DIR"
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$STATE_DIR"
 install -o root -g root -m 0755 "$BINARY_SRC" "$BINARY_DST"
 
-api_key="$(openssl rand -hex 32)"
-printf 'TUXBRIDGE_API_KEY=%s\n' "$api_key" > "$CONFIG_DIR/tuxbridge.env"
+# Preserve an existing API key on reinstall/profile switch; generate one only once.
+if [[ ! -s "$CONFIG_DIR/tuxbridge.env" ]]; then
+  api_key="$(openssl rand -hex 32)"
+  printf 'TUXBRIDGE_API_KEY=%s\n' "$api_key" > "$CONFIG_DIR/tuxbridge.env"
+fi
 chmod 0640 "$CONFIG_DIR/tuxbridge.env"
 chown root:"$USER_NAME" "$CONFIG_DIR/tuxbridge.env"
+
+if [[ "$profile" == "default" ]]; then
+  git_write=false
+  git_network=false
+else
+  git_write=true
+  git_network=true
+fi
 
 cat > "$CONFIG_DIR/tuxbridge.toml" <<EOF
 [server]
@@ -99,8 +121,8 @@ fs_read = true
 fs_write = true
 commands = true
 git_read = true
-git_write = true
-git_network = true
+git_write = $git_write
+git_network = $git_network
 EOF
 chmod 0640 "$CONFIG_DIR/tuxbridge.toml"
 chown root:"$USER_NAME" "$CONFIG_DIR/tuxbridge.toml"
