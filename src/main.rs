@@ -11,6 +11,8 @@ mod auth;
 mod config;
 mod error;
 mod fs;
+mod git;
+mod project;
 mod state;
 mod system;
 mod workspace;
@@ -52,6 +54,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/fs/read", post(fs::read_file))
         .route("/v1/fs/read-batch", post(fs::read_files))
         .route("/v1/fs/search", post(fs::search_files))
+        .route("/v1/project/inspect", post(project::inspect_project))
+        .route("/v1/git/status", post(git::git_status))
+        .route("/v1/git/branches", post(git::git_branches))
+        .route("/v1/git/log", post(git::git_log))
+        .route("/v1/git/diff", post(git::git_diff))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,
