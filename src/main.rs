@@ -27,6 +27,7 @@ mod mutation;
 mod project;
 mod raw_command;
 mod repo_map;
+mod role_policy;
 mod security;
 mod sessions;
 mod state;
