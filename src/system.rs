@@ -46,7 +46,7 @@ fn read_memory_total_kib() -> Option<u64> {
     })
 }
 
-fn command_exists(command: &str) -> bool {
+pub(crate) fn command_exists(command: &str) -> bool {
     let Some(path) = env::var_os("PATH") else {
         return false;
     };

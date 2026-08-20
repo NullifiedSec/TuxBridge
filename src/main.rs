@@ -10,6 +10,7 @@ use tokio::net::TcpListener;
 mod auth;
 mod command;
 mod config;
+mod doctor;
 mod error;
 mod fs;
 mod git;
@@ -50,6 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let protected = Router::new()
         .route("/v1/system", get(system::system_info))
+        .route("/v1/doctor", get(doctor::doctor))
         .route("/v1/workspaces", get(workspace::list_workspaces))
         .route("/v1/workspaces/{name}", get(workspace::get_workspace))
         .route("/v1/fs/list", post(fs::list_directory))

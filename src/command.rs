@@ -304,27 +304,20 @@ async fn execute_inner(
     let end_state = if let Some(mut cancel) = cancel {
         tokio::select! {
             status = child.wait() => EndState::Exited(status.map_err(|error| ExecuteError::Failed(format!("failed waiting for command: {error}")))?),
-            _ = time::sleep(Duration::from_secs(timeout_seconds)) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                EndState::TimedOut
-            }
-            _ = &mut cancel => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                EndState::Cancelled
-            }
+            _ = time::sleep(Duration::from_secs(timeout_seconds)) => EndState::TimedOut,
+            _ = &mut cancel => EndState::Cancelled,
         }
     } else {
         tokio::select! {
             status = child.wait() => EndState::Exited(status.map_err(|error| ExecuteError::Failed(format!("failed waiting for command: {error}")))?),
-            _ = time::sleep(Duration::from_secs(timeout_seconds)) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                EndState::TimedOut
-            }
+            _ = time::sleep(Duration::from_secs(timeout_seconds)) => EndState::TimedOut,
         }
     };
+
+    if matches!(end_state, EndState::TimedOut | EndState::Cancelled) {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+    }
 
     let (stdout, stdout_truncated) = stdout_task
         .await

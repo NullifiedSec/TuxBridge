@@ -1,0 +1,425 @@
+openapi: 3.1.0
+info:
+  title: TuxBridge API
+  version: 0.1.0
+  description: Capability-scoped Linux host bridge for ChatGPT Actions.
+servers:
+  - url: https://tuxbridge.example.com
+    description: Replace with your public HTTPS TuxBridge endpoint.
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      security: []
+      summary: Check whether TuxBridge is alive.
+      responses:
+        '200':
+          description: Service health.
+  /v1/system:
+    get:
+      operationId: getSystemInfo
+      summary: Inspect safe host metadata and common development-tool availability.
+      responses:
+        '200': { description: System information. }
+  /v1/doctor:
+    get:
+      operationId: runDoctor
+      summary: Check TuxBridge configuration, workspaces, Git readiness, and service-user safety.
+      responses:
+        '200': { description: Diagnostic checks. }
+  /v1/workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List exposed workspaces and capabilities.
+      responses:
+        '200': { description: Workspace list. }
+  /v1/workspaces/{name}:
+    get:
+      operationId: getWorkspace
+      summary: Inspect one configured workspace.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Workspace metadata. }
+  /v1/fs/list:
+    post:
+      operationId: listDirectory
+      summary: List a directory inside a readable workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PathRequest' }
+      responses:
+        '200': { description: Directory entries. }
+  /v1/fs/stat:
+    post:
+      operationId: statPath
+      summary: Inspect metadata for a path inside a readable workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PathRequest' }
+      responses:
+        '200': { description: Path metadata. }
+  /v1/fs/read:
+    post:
+      operationId: readFile
+      summary: Read bounded UTF-8 text from a workspace file with optional line range.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReadRequest' }
+      responses:
+        '200': { description: File content, size, hash, and truncation metadata. }
+  /v1/fs/read-batch:
+    post:
+      operationId: readFiles
+      summary: Read multiple files while preserving per-file partial success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchReadRequest' }
+      responses:
+        '200': { description: Per-file read results. }
+  /v1/fs/search:
+    post:
+      operationId: searchFiles
+      summary: Recursively search UTF-8 file contents without following symlinks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SearchRequest' }
+      responses:
+        '200': { description: Search matches. }
+  /v1/fs/hash:
+    post:
+      operationId: hashFile
+      summary: Compute a full-file SHA-256 for optimistic concurrency before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FileIdentityRequest' }
+      responses:
+        '200': { description: Full-file size and SHA-256. }
+  /v1/fs/write:
+    post:
+      operationId: writeFile
+      summary: Create or replace a UTF-8 file. Replace mode requires the expected full-file SHA-256.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WriteRequest' }
+      responses:
+        '200': { description: Mutation result. }
+        '409': { description: Target exists or expected hash is stale. }
+  /v1/fs/patch:
+    post:
+      operationId: patchFile
+      summary: Replace exactly one text occurrence in a file after full-file SHA-256 validation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PatchRequest' }
+      responses:
+        '200': { description: Mutation result. }
+        '409': { description: Hash mismatch or ambiguous patch. }
+  /v1/project/inspect:
+    post:
+      operationId: inspectProject
+      summary: Detect common project manifests, package managers, and top-level structure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceRequest' }
+      responses:
+        '200': { description: Project inspection. }
+  /v1/commands/run:
+    post:
+      operationId: runCommand
+      summary: Run one argv-based command in a configured workspace with bounded output and timeout.
+      description: This does not invoke a shell implicitly. Commands inherit the TuxBridge service user's OS privileges.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommandRequest' }
+      responses:
+        '200': { description: Command result. }
+  /v1/commands/start:
+    post:
+      operationId: startCommand
+      summary: Start a cancellable background command job in a configured workspace.
+      description: This does not invoke a shell implicitly. Commands inherit the TuxBridge service user's OS privileges.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommandRequest' }
+      responses:
+        '200': { description: Initial job snapshot. }
+  /v1/jobs/{id}:
+    get:
+      operationId: getCommandJob
+      summary: Inspect a background command job.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Job snapshot. }
+    delete:
+      operationId: cancelCommandJob
+      summary: Cancel a running background command job.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Job snapshot at cancellation request time. }
+  /v1/git/status:
+    post:
+      operationId: gitStatus
+      summary: Return structured Git branch and working-tree status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceRequest' }
+      responses:
+        '200': { description: Structured Git status. }
+  /v1/git/branches:
+    post:
+      operationId: gitBranches
+      summary: List local Git branches, SHAs, upstreams, and current-branch state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceRequest' }
+      responses:
+        '200': { description: Branches. }
+  /v1/git/log:
+    post:
+      operationId: gitLog
+      summary: Read recent Git history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitLogRequest' }
+      responses:
+        '200': { description: Commit history. }
+  /v1/git/diff:
+    post:
+      operationId: gitDiff
+      summary: Read a bounded unstaged or staged Git diff.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitDiffRequest' }
+      responses:
+        '200': { description: Diff content. }
+  /v1/git/fetch:
+    post:
+      operationId: gitFetch
+      summary: Fetch all configured remotes and prune stale refs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceRequest' }
+      responses:
+        '200': { description: Git command result. }
+  /v1/git/pull:
+    post:
+      operationId: gitPull
+      summary: Pull the current upstream using fast-forward-only semantics.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceRequest' }
+      responses:
+        '200': { description: Git command result. }
+  /v1/git/add:
+    post:
+      operationId: gitAdd
+      summary: Stage explicit workspace-relative paths.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitAddRequest' }
+      responses:
+        '200': { description: Git command result. }
+  /v1/git/commit:
+    post:
+      operationId: gitCommit
+      summary: Commit currently staged changes with an explicit message.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitCommitRequest' }
+      responses:
+        '200': { description: Git command result. }
+  /v1/git/push:
+    post:
+      operationId: gitPush
+      summary: Push one validated local branch to the same branch name on a validated remote.
+      description: Force push is intentionally unsupported.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitPushRequest' }
+      responses:
+        '200': { description: Git command result. }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    WorkspaceRequest:
+      type: object
+      required: [workspace]
+      properties:
+        workspace: { type: string }
+    PathRequest:
+      type: object
+      required: [workspace]
+      properties:
+        workspace: { type: string }
+        path:
+          type: string
+          default: ''
+          description: Workspace-relative path. Empty means the workspace root where supported.
+    FileIdentityRequest:
+      type: object
+      required: [workspace, path]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+    ReadSpec:
+      type: object
+      required: [path]
+      properties:
+        path: { type: string }
+        start_line: { type: integer, minimum: 1 }
+        end_line: { type: integer, minimum: 1 }
+        max_bytes: { type: integer, minimum: 1, maximum: 8388608 }
+    ReadRequest:
+      allOf:
+        - $ref: '#/components/schemas/FileIdentityRequest'
+        - type: object
+          properties:
+            start_line: { type: integer, minimum: 1 }
+            end_line: { type: integer, minimum: 1 }
+            max_bytes: { type: integer, minimum: 1, maximum: 8388608 }
+    BatchReadRequest:
+      type: object
+      required: [workspace, files]
+      properties:
+        workspace: { type: string }
+        files:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ReadSpec' }
+    SearchRequest:
+      type: object
+      required: [workspace, query]
+      properties:
+        workspace: { type: string }
+        path: { type: string, default: '' }
+        query: { type: string, minLength: 1 }
+        max_results: { type: integer, minimum: 1, maximum: 1000 }
+    WriteRequest:
+      type: object
+      required: [workspace, path, mode, content]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        mode:
+          type: string
+          enum: [create, replace]
+        content: { type: string }
+        expected_sha256:
+          type: string
+          description: Required for replace mode; obtain from hashFile.
+    PatchRequest:
+      type: object
+      required: [workspace, path, expected_sha256, old, new]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        expected_sha256: { type: string }
+        old: { type: string, minLength: 1 }
+        new: { type: string }
+    CommandRequest:
+      type: object
+      required: [workspace, argv]
+      properties:
+        workspace: { type: string }
+        argv:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items: { type: string }
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 900
+    GitLogRequest:
+      type: object
+      required: [workspace]
+      properties:
+        workspace: { type: string }
+        limit: { type: integer, minimum: 1, maximum: 200 }
+    GitDiffRequest:
+      type: object
+      required: [workspace]
+      properties:
+        workspace: { type: string }
+        staged: { type: boolean, default: false }
+        path: { type: string }
+        max_bytes: { type: integer, minimum: 1, maximum: 8388608 }
+    GitAddRequest:
+      type: object
+      required: [workspace, paths]
+      properties:
+        workspace: { type: string }
+        paths:
+          type: array
+          minItems: 1
+          items: { type: string }
+    GitCommitRequest:
+      type: object
+      required: [workspace, message]
+      properties:
+        workspace: { type: string }
+        message: { type: string, minLength: 1, maxLength: 16384 }
+    GitPushRequest:
+      type: object
+      required: [workspace, remote, branch]
+      properties:
+        workspace: { type: string }
+        remote: { type: string }
+        branch: { type: string }
