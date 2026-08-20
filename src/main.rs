@@ -12,6 +12,7 @@ mod config;
 mod error;
 mod fs;
 mod git;
+mod mutation;
 mod project;
 mod state;
 mod system;
@@ -54,6 +55,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/fs/read", post(fs::read_file))
         .route("/v1/fs/read-batch", post(fs::read_files))
         .route("/v1/fs/search", post(fs::search_files))
+        .route("/v1/fs/hash", post(mutation::hash_file))
+        .route("/v1/fs/write", post(mutation::write_file))
+        .route("/v1/fs/patch", post(mutation::patch_file))
         .route("/v1/project/inspect", post(project::inspect_project))
         .route("/v1/git/status", post(git::git_status))
         .route("/v1/git/branches", post(git::git_branches))

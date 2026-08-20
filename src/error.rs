@@ -8,6 +8,7 @@ use serde::Serialize;
 #[derive(Debug)]
 pub enum ApiError {
     BadRequest(String),
+    Conflict(String),
     Forbidden(String),
     NotFound(String),
     Unsupported(String),
@@ -24,6 +25,7 @@ impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BadRequest(message)
+            | Self::Conflict(message)
             | Self::Forbidden(message)
             | Self::NotFound(message)
             | Self::Unsupported(message)
@@ -38,6 +40,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message) = match self {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, "bad_request", message),
+            Self::Conflict(message) => (StatusCode::CONFLICT, "conflict", message),
             Self::Forbidden(message) => (StatusCode::FORBIDDEN, "forbidden", message),
             Self::NotFound(message) => (StatusCode::NOT_FOUND, "not_found", message),
             Self::Unsupported(message) => (
