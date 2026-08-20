@@ -6,6 +6,8 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROFILE_GENERATOR="$SCRIPT_DIR/scripts/generate_openapi_profiles.py"
 USER_NAME="tuxbridge"
 HOME_DIR="/home/${USER_NAME}"
 CONFIG_DIR="/etc/tuxbridge"
@@ -16,6 +18,7 @@ SUDOERS_DST="/etc/sudoers.d/tuxbridge"
 ENV_FILE="$CONFIG_DIR/tuxbridge.env"
 BINARY_SRC="./target/release/tuxbridge"
 SUBDOMAIN=""
+PUBLIC_ORIGIN=""
 
 usage() {
   cat <<'EOF'
@@ -30,7 +33,10 @@ Examples:
 
 Options:
   -subdomain, --subdomain HOSTNAME
-      Print a ready-to-paste Caddy reverse-proxy block after installation.
+      Configure the public GPT Action origin for onboarding.
+      The installer regenerates openapi-dev.yaml, openapi-review.yaml, and
+      openapi-ops.yaml with https://HOSTNAME in their servers section, then
+      prints a ready-to-paste Caddy reverse-proxy block.
       TuxBridge itself remains bound to 127.0.0.1:8787.
 
   -h, --help
@@ -86,7 +92,7 @@ done
 
 if [[ -n "$SUBDOMAIN" ]]; then
   # Accept DNS hostnames only. This is deliberately strict because the value is
-  # rendered directly into a Caddyfile example at the end of installation.
+  # rendered into both generated OpenAPI documents and a Caddyfile example.
   if (( ${#SUBDOMAIN} > 253 )) \
     || [[ "$SUBDOMAIN" == .* || "$SUBDOMAIN" == *. ]] \
     || [[ ! "$SUBDOMAIN" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
@@ -95,6 +101,17 @@ if [[ -n "$SUBDOMAIN" ]]; then
     exit 2
   fi
   SUBDOMAIN="${SUBDOMAIN,,}"
+  PUBLIC_ORIGIN="https://$SUBDOMAIN"
+
+  command -v python3 >/dev/null 2>&1 || {
+    echo "python3 is required to generate GPT Action schemas when -subdomain is used." >&2
+    exit 1
+  }
+  if [[ ! -f "$PROFILE_GENERATOR" ]]; then
+    echo "OpenAPI profile generator not found: $PROFILE_GENERATOR" >&2
+    echo "Run the installer from a complete TuxBridge checkout." >&2
+    exit 1
+  fi
 fi
 
 if [[ ! -x "$BINARY_SRC" ]]; then
@@ -288,6 +305,15 @@ else
   rm -f "$SUDOERS_DST"
 fi
 
+if [[ -n "$SUBDOMAIN" ]]; then
+  echo "Generating GPT Action schemas for $PUBLIC_ORIGIN ..."
+  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] && id "$SUDO_USER" >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1; then
+    runuser -u "$SUDO_USER" -- python3 "$PROFILE_GENERATOR" --server-url "$PUBLIC_ORIGIN"
+  else
+    python3 "$PROFILE_GENERATOR" --server-url "$PUBLIC_ORIGIN"
+  fi
+fi
+
 systemctl daemon-reload
 systemctl enable --now tuxbridge.service
 
@@ -305,6 +331,14 @@ echo "  TUXBRIDGE_API_KEY        -> administrator / Mission Control fallback"
 if [[ -n "$SUBDOMAIN" ]]; then
   cat <<EOF
 
+GPT Action schemas regenerated with:
+  $PUBLIC_ORIGIN
+
+Generated files:
+  $SCRIPT_DIR/openapi-dev.yaml
+  $SCRIPT_DIR/openapi-review.yaml
+  $SCRIPT_DIR/openapi-ops.yaml
+
 Caddy reverse-proxy block for $SUBDOMAIN
 ----------------------------------------
 $SUBDOMAIN {
@@ -318,8 +352,8 @@ Then validate and reload Caddy, for example:
   sudo systemctl reload caddy
 
 Public TuxBridge base URL:
-  https://$SUBDOMAIN
+  $PUBLIC_ORIGIN
 
-Use that HTTPS origin as the server URL in the GPT Action OpenAPI schemas.
+The three generated GPT Action schemas already use this HTTPS origin.
 EOF
 fi
