@@ -2,10 +2,9 @@
 """Generate or validate <=30-operation GPT Action schemas.
 
 Canonical route/method/operation metadata comes from openapi.yaml plus the
-occupation allowlists in openapi-profiles.json. The default mode regenerates
-standalone JSON-compatible YAML files. --check validates the committed profile
-files without rewriting them, which keeps CI deterministic even when the
-profile files contain hand-tuned descriptions or narrower component schemas.
+occupation policy in openapi-profiles.json. Only `operations` count toward the
+GPT Actions limit; `support_routes` are server-side role permissions used by
+Mission Control or other non-Action clients.
 """
 from __future__ import annotations
 
@@ -50,19 +49,33 @@ def operation_count(spec: dict) -> int:
     )
 
 
-def validate_manifest(profile: str, wanted_ids: list[str], index: dict[str, tuple[str, str]]) -> None:
-    if len(wanted_ids) > LIMIT:
+def validate_manifest(profile: str, spec: dict, index: dict[str, tuple[str, str]]) -> list[str]:
+    if set(spec) - {"operations", "support_routes"}:
+        raise SystemExit(f"profile {profile!r} contains unknown manifest keys")
+    wanted_ids = spec.get("operations", [])
+    support_routes = spec.get("support_routes", [])
+    if not isinstance(wanted_ids, list):
+        raise SystemExit(f"profile {profile!r} operations must be a list")
+    if not 1 <= len(wanted_ids) <= LIMIT:
         raise SystemExit(f"profile {profile!r} defines {len(wanted_ids)} operations; maximum is {LIMIT}")
     if len(set(wanted_ids)) != len(wanted_ids):
         raise SystemExit(f"profile {profile!r} contains duplicate operationId values")
     missing = set(wanted_ids) - index.keys()
     if missing:
         raise SystemExit(f"profile {profile!r} references missing operationIds: {sorted(missing)}")
+    if not isinstance(support_routes, list):
+        raise SystemExit(f"profile {profile!r} support_routes must be a list")
+    for route in support_routes:
+        if not isinstance(route, dict) or set(route) != {"method", "path"}:
+            raise SystemExit(f"profile {profile!r} has malformed support route {route!r}")
+        method = str(route["method"]).lower()
+        path = str(route["path"])
+        if method not in METHODS or not path.startswith("/v1/") or any(ch.isspace() for ch in path):
+            raise SystemExit(f"profile {profile!r} has invalid support route {route!r}")
+    return wanted_ids
 
 
 def generate(profile: str, wanted_ids: list[str], canonical: dict) -> dict:
-    index = canonical_index(canonical)
-    validate_manifest(profile, wanted_ids, index)
     wanted = set(wanted_ids)
     paths: dict = {}
     for path, path_item in canonical.get("paths", {}).items():
@@ -76,7 +89,7 @@ def generate(profile: str, wanted_ids: list[str], canonical: dict) -> dict:
             if "parameters" in path_item:
                 selected["parameters"] = copy.deepcopy(path_item["parameters"])
             paths[path] = selected
-    spec = {
+    result = {
         "openapi": canonical["openapi"],
         "info": {
             "title": f"TuxBridge {profile.title()} GPT API",
@@ -88,13 +101,13 @@ def generate(profile: str, wanted_ids: list[str], canonical: dict) -> dict:
         "paths": paths,
         "components": copy.deepcopy(canonical.get("components", {})),
     }
-    if operation_count(spec) != len(wanted_ids):
+    if operation_count(result) != len(wanted_ids):
         raise SystemExit(f"profile {profile!r} did not generate the expected operation count")
-    return spec
+    return result
 
 
 def parse_profile_routes(path: Path) -> dict[str, tuple[str, str]]:
-    """Parse only path/method/operationId indentation from our committed YAML."""
+    """Parse only path/method/operationId indentation from committed YAML."""
     current_path = None
     current_method = None
     found: dict[str, tuple[str, str]] = {}
@@ -146,8 +159,8 @@ def main() -> None:
     canonical = load_json(CANONICAL)
     profiles = load_json(PROFILES)
     index = canonical_index(canonical)
-    for profile, operation_ids in profiles.items():
-        validate_manifest(profile, operation_ids, index)
+    for profile, profile_spec in profiles.items():
+        operation_ids = validate_manifest(profile, profile_spec, index)
         if args.check:
             check_committed(profile, operation_ids, index)
         else:
