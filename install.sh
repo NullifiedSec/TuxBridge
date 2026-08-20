@@ -26,17 +26,16 @@ cat <<'EOF'
 TuxBridge security profile
 
   1) Default
-     Constrained. TuxBridge runs as its own Unix user. Raw shell mode is restricted
-     to a small allowlist and shell metacharacters are rejected.
+     Strongly constrained. TuxBridge runs as its own Unix user, systemd exposes
+     only its home/state as writable, and command execution is allowlisted.
 
   2) Loose
-     TuxBridge becomes its Unix user. Raw shell commands may do anything that the
-     tuxbridge account itself can do. No sudo is granted.
+     TuxBridge becomes its Unix user. It receives the ordinary OS permissions of
+     that account, with no sudo privileges added by TuxBridge.
 
   3) I_want_to_nuke_my_server
      Same as Loose, plus passwordless sudo for the tuxbridge user.
-     This effectively grants remote root-equivalent command execution to whoever
-     controls the TuxBridge API key. Yes, really.
+     Whoever controls the API key is effectively root. Yes, really.
 
 EOF
 
@@ -48,6 +47,7 @@ case "$choice" in
     profile="i_want_to_nuke_my_server"
     echo
     echo "WARNING: this grants tuxbridge passwordless sudo for ALL commands."
+    echo "Treat the TuxBridge API key as a root credential."
     read -r -p "Type NUKE to continue: " confirm
     [[ "$confirm" == "NUKE" ]] || { echo "Cancelled."; exit 1; }
     ;;
@@ -58,8 +58,7 @@ if ! id "$USER_NAME" >/dev/null 2>&1; then
   useradd --create-home --home-dir "$HOME_DIR" --shell /bin/bash "$USER_NAME"
 fi
 
-# Keep the account intentionally ordinary: no sudo/admin/docker-style groups are added.
-# Existing group memberships are left intact if the administrator created the user earlier.
+# Intentionally ordinary account: TuxBridge never adds sudo/admin/docker groups.
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$HOME_DIR"
 install -d -o root -g "$USER_NAME" -m 0750 "$CONFIG_DIR"
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$STATE_DIR"
@@ -89,6 +88,9 @@ max_command_timeout_seconds = 900
 command_output_bytes = 2097152
 max_jobs = 128
 job_retention_seconds = 3600
+
+# Add workspaces explicitly after install. Nothing outside the service user's
+# normal OS access is granted automatically.
 EOF
 chmod 0640 "$CONFIG_DIR/tuxbridge.toml"
 chown root:"$USER_NAME" "$CONFIG_DIR/tuxbridge.toml"
@@ -113,19 +115,40 @@ ExecStart=/usr/local/bin/tuxbridge
 Restart=on-failure
 RestartSec=3
 UMask=0077
-NoNewPrivileges=no
+EOF
+
+if [[ "$profile" == "default" ]]; then
+  cat >> "$SERVICE_DST" <<'EOF'
+
+# Default profile: additional service sandbox on top of the dedicated Unix user.
+NoNewPrivileges=yes
 PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/tuxbridge /var/lib/tuxbridge
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+EOF
+fi
+
+cat >> "$SERVICE_DST" <<'EOF'
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 if [[ "$profile" == "i_want_to_nuke_my_server" ]]; then
+  command -v visudo >/dev/null 2>&1 || { echo "visudo is required for nuke profile" >&2; exit 1; }
   printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$USER_NAME" > "$SUDOERS_DST"
   chmod 0440 "$SUDOERS_DST"
   visudo -cf "$SUDOERS_DST" >/dev/null
