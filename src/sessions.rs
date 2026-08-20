@@ -1,0 +1,139 @@
+use std::{collections::{BTreeMap, HashMap}, fs, io::Write, path::{Component, Path, PathBuf}, sync::{Arc, atomic::{AtomicU64, Ordering}}, time::{SystemTime, UNIX_EPOCH}};
+
+use axum::{extract::{Path as AxumPath, State}, Json};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tempfile::NamedTempFile;
+use tokio::sync::Mutex;
+
+use crate::{error::ApiError, state::AppState};
+
+const MAX_SESSIONS: usize = 64;
+const MAX_FILES_PER_SESSION: usize = 128;
+const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Clone, Default)]
+pub struct SessionStore {
+    inner: Arc<Mutex<HashMap<String, SessionRecord>>>,
+    next: Arc<AtomicU64>,
+}
+
+struct SessionRecord {
+    id: String,
+    workspace: String,
+    title: String,
+    created_at_unix_ms: u128,
+    status: SessionStatus,
+    files: BTreeMap<String, FileSnapshot>,
+    bytes: usize,
+}
+
+struct FileSnapshot {
+    before: Vec<u8>,
+    before_sha256: String,
+    after_sha256: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SessionStatus { Active, Finalized, RolledBack }
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSessionRequest { workspace: String, title: Option<String> }
+
+#[derive(Debug, Serialize)]
+pub struct SessionView {
+    id: String,
+    workspace: String,
+    title: String,
+    created_at_unix_ms: u128,
+    status: SessionStatus,
+    files: Vec<SessionFileView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionFileView {
+    path: String,
+    before_sha256: String,
+    after_sha256: String,
+    current_sha256: Option<String>,
+    rollback_safe: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RollbackResponse { id: String, restored: Vec<String>, skipped: Vec<String> }
+
+impl SessionStore {
+    pub async fn create(&self, workspace: &str, title: String) -> Result<String, ApiError> {
+        let mut sessions = self.inner.lock().await;
+        if sessions.values().filter(|s| matches!(s.status, SessionStatus::Active)).count() >= MAX_SESSIONS {
+            return Err(ApiError::Conflict(format!("active coding session limit of {MAX_SESSIONS} reached")));
+        }
+        let id = format!("edit-{:016x}", self.next.fetch_add(1, Ordering::Relaxed) + 1);
+        sessions.insert(id.clone(), SessionRecord { id:id.clone(), workspace:workspace.into(), title, created_at_unix_ms:now_ms(), status:SessionStatus::Active, files:BTreeMap::new(), bytes:0 });
+        Ok(id)
+    }
+
+    pub async fn capture_change(&self, id: &str, workspace: &str, relative_path: &str, before: &[u8], after: &[u8]) -> Result<(), ApiError> {
+        let mut sessions = self.inner.lock().await;
+        let session = sessions.get_mut(id).ok_or_else(|| ApiError::NotFound(format!("coding session {id:?} not found")))?;
+        if session.workspace != workspace { return Err(ApiError::Forbidden("coding session belongs to another workspace".into())); }
+        if !matches!(session.status, SessionStatus::Active) { return Err(ApiError::Conflict("coding session is not active".into())); }
+        if let Some(existing) = session.files.get_mut(relative_path) {
+            existing.after_sha256 = digest(after);
+            return Ok(());
+        }
+        if session.files.len() >= MAX_FILES_PER_SESSION { return Err(ApiError::Conflict(format!("session file limit of {MAX_FILES_PER_SESSION} reached"))); }
+        if session.bytes.saturating_add(before.len()) > MAX_SNAPSHOT_BYTES { return Err(ApiError::Conflict("session rollback snapshot budget exceeded".into())); }
+        session.bytes += before.len();
+        session.files.insert(relative_path.into(), FileSnapshot { before:before.to_vec(), before_sha256:digest(before), after_sha256:digest(after) });
+        Ok(())
+    }
+
+    async fn views(&self, state: &AppState) -> Vec<SessionView> {
+        let sessions = self.inner.lock().await;
+        sessions.values().map(|s| view_record(state, s)).collect()
+    }
+}
+
+pub async fn create_session(State(state):State<AppState>,Json(req):Json<CreateSessionRequest>)->Result<Json<SessionView>,ApiError>{
+    let ws=state.config.workspaces.get(&req.workspace).ok_or_else(||ApiError::NotFound("workspace not configured".into()))?;
+    if !ws.capabilities.fs_read { return Err(ApiError::Forbidden("workspace does not allow filesystem reads".into())); }
+    let id=state.sessions.create(&req.workspace,req.title.unwrap_or_else(||"Agent coding session".into())).await?;
+    state.events.emit("session.created",Some(&req.workspace),format!("created coding session {id}"),serde_json::json!({"session_id":id})).await;
+    get_session(State(state),AxumPath(id)).await
+}
+
+pub async fn list_sessions(State(state):State<AppState>)->Json<Vec<SessionView>>{Json(state.sessions.views(&state).await)}
+
+pub async fn get_session(State(state):State<AppState>,AxumPath(id):AxumPath<String>)->Result<Json<SessionView>,ApiError>{
+    let sessions=state.sessions.inner.lock().await; let s=sessions.get(&id).ok_or_else(||ApiError::NotFound(format!("coding session {id:?} not found")))?; Ok(Json(view_record(&state,s)))
+}
+
+pub async fn finalize(State(state):State<AppState>,AxumPath(id):AxumPath<String>)->Result<Json<SessionView>,ApiError>{
+    {let mut sessions=state.sessions.inner.lock().await;let s=sessions.get_mut(&id).ok_or_else(||ApiError::NotFound(format!("coding session {id:?} not found")))?;if !matches!(s.status,SessionStatus::Active){return Err(ApiError::Conflict("session is not active".into()));}s.status=SessionStatus::Finalized;}
+    state.events.emit("session.finalized",None,format!("finalized coding session {id}"),serde_json::json!({"session_id":id})).await; get_session(State(state),AxumPath(id)).await
+}
+
+pub async fn rollback(State(state):State<AppState>,AxumPath(id):AxumPath<String>)->Result<Json<RollbackResponse>,ApiError>{
+    let (workspace, snapshots)={let sessions=state.sessions.inner.lock().await;let s=sessions.get(&id).ok_or_else(||ApiError::NotFound(format!("coding session {id:?} not found")))?;if !matches!(s.status,SessionStatus::Active){return Err(ApiError::Conflict("only active sessions can roll back".into()));}(s.workspace.clone(),s.files.iter().map(|(p,f)|(p.clone(),f.before.clone(),f.after_sha256.clone())).collect::<Vec<_>>())};
+    let ws=state.config.workspaces.get(&workspace).ok_or_else(||ApiError::NotFound("workspace no longer configured".into()))?; if !ws.capabilities.fs_write{return Err(ApiError::Forbidden("workspace does not allow filesystem writes".into()));}
+    let root=fs::canonicalize(&ws.root).map_err(map_io)?; let mut prepared=Vec::new(); let mut skipped=Vec::new();
+    for (rel,before,after_sha) in snapshots { let path=safe_existing(&root,&rel)?;let current=fs::read(&path).map_err(map_io)?;if digest(&current)!=after_sha{skipped.push(rel);continue;}let permissions=fs::metadata(&path).map_err(map_io)?.permissions();prepared.push((rel,path,before,permissions)); }
+    if !skipped.is_empty(){return Err(ApiError::Conflict(format!("rollback refused because {} session files changed after the agent wrote them: {}",skipped.len(),skipped.join(", "))));}
+    let mut restored=Vec::new();for (rel,path,before,permissions) in prepared{atomic_write(&path,&before,permissions)?;restored.push(rel);}
+    {let mut sessions=state.sessions.inner.lock().await;if let Some(s)=sessions.get_mut(&id){s.status=SessionStatus::RolledBack;}}
+    state.events.emit("session.rolled_back",Some(&workspace),format!("rolled back coding session {id}"),serde_json::json!({"session_id":id,"restored":restored})).await;
+    Ok(Json(RollbackResponse{id,restored,skipped:Vec::new()}))
+}
+
+fn view_record(state:&AppState,s:&SessionRecord)->SessionView{
+    let root=state.config.workspaces.get(&s.workspace).and_then(|w|fs::canonicalize(&w.root).ok());
+    let files=s.files.iter().map(|(path,f)|{let current_sha256=root.as_ref().and_then(|r|safe_existing(r,path).ok()).and_then(|p|fs::read(p).ok()).map(|b|digest(&b));let rollback_safe=current_sha256.as_deref()==Some(f.after_sha256.as_str());SessionFileView{path:path.clone(),before_sha256:f.before_sha256.clone(),after_sha256:f.after_sha256.clone(),current_sha256,rollback_safe}}).collect();
+    SessionView{id:s.id.clone(),workspace:s.workspace.clone(),title:s.title.clone(),created_at_unix_ms:s.created_at_unix_ms,status:s.status,files}
+}
+fn safe_existing(root:&Path,rel:&str)->Result<PathBuf,ApiError>{let p=Path::new(rel);if p.is_absolute()||p.components().any(|c|matches!(c,Component::ParentDir|Component::RootDir|Component::Prefix(_))){return Err(ApiError::BadRequest("session path escapes workspace".into()));}let raw=root.join(p);if fs::symlink_metadata(&raw).map_err(map_io)?.file_type().is_symlink(){return Err(ApiError::Forbidden("session rollback through symlinks is forbidden".into()));}let c=fs::canonicalize(raw).map_err(map_io)?;if !c.starts_with(root)||!c.is_file(){return Err(ApiError::Forbidden("session path escapes workspace".into()));}Ok(c)}
+fn atomic_write(path:&Path,content:&[u8],permissions:fs::Permissions)->Result<(),ApiError>{let parent=path.parent().ok_or_else(||ApiError::BadRequest("file has no parent".into()))?;let mut temp=NamedTempFile::new_in(parent).map_err(map_io)?;temp.write_all(content).map_err(map_io)?;temp.as_file().sync_all().map_err(map_io)?;temp.as_file().set_permissions(permissions).map_err(map_io)?;temp.persist(path).map_err(|e|map_io(e.error))?;Ok(())}
+fn digest(bytes:&[u8])->String{format!("{:x}",Sha256::digest(bytes))}
+fn now_ms()->u128{SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()}
+fn map_io(e:std::io::Error)->ApiError{match e.kind(){std::io::ErrorKind::NotFound=>ApiError::NotFound(e.to_string()),std::io::ErrorKind::PermissionDenied=>ApiError::Forbidden(e.to_string()),_=>ApiError::Internal(e.to_string())}}
