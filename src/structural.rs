@@ -1,0 +1,232 @@
+use std::{fs, io::Write, path::{Component, Path, PathBuf}};
+
+use axum::{extract::State, Json};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tempfile::NamedTempFile;
+use tree_sitter::{Language, Node, Parser, Point};
+
+use crate::{config::WorkspaceConfig, error::ApiError, state::AppState};
+
+const MAX_FILE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_NODES: usize = 4000;
+
+#[derive(Debug, Deserialize)]
+pub struct StructureRequest {
+    workspace: String,
+    path: String,
+    kind: Option<String>,
+    name: Option<String>,
+    max_nodes: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NodeAtRequest {
+    workspace: String,
+    path: String,
+    line: usize,
+    column: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplaceNodeRequest {
+    workspace: String,
+    path: String,
+    expected_sha256: String,
+    start_byte: usize,
+    end_byte: usize,
+    expected_kind: Option<String>,
+    new: String,
+    #[serde(default = "default_true")]
+    dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StructuralNode {
+    kind: String,
+    name: Option<String>,
+    start_byte: usize,
+    end_byte: usize,
+    start_line: usize,
+    start_column: usize,
+    end_line: usize,
+    end_column: usize,
+    preview: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StructureResponse {
+    path: String,
+    language: String,
+    sha256: String,
+    has_parse_errors: bool,
+    nodes: Vec<StructuralNode>,
+    truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReplaceNodeResponse {
+    path: String,
+    kind: String,
+    old_sha256: String,
+    new_sha256: String,
+    dry_run: bool,
+    preview: String,
+}
+
+pub async fn structure(State(state): State<AppState>, Json(req): Json<StructureRequest>) -> Result<Json<StructureResponse>, ApiError> {
+    let workspace = readable_workspace(&state, &req.workspace)?;
+    let (root, path) = existing_file(workspace, &req.path)?;
+    let bytes = read_bounded(&path)?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| ApiError::Unsupported("file is not UTF-8".into()))?;
+    let (language_name, language) = language_for(&path)?;
+    let mut parser = Parser::new();
+    parser.set_language(&language).map_err(|e| ApiError::Internal(format!("failed to load tree-sitter grammar: {e}")))?;
+    let tree = parser.parse(text, None).ok_or_else(|| ApiError::Internal("tree-sitter returned no parse tree".into()))?;
+    let limit = req.max_nodes.unwrap_or(1000).clamp(1, MAX_NODES);
+    let mut nodes = Vec::new();
+    collect_nodes(tree.root_node(), text, req.kind.as_deref(), req.name.as_deref(), limit, &mut nodes);
+    Ok(Json(StructureResponse {
+        path: relative(&root, &path),
+        language: language_name.into(),
+        sha256: digest(&bytes),
+        has_parse_errors: tree.root_node().has_error(),
+        truncated: nodes.len() >= limit,
+        nodes,
+    }))
+}
+
+pub async fn node_at(State(state): State<AppState>, Json(req): Json<NodeAtRequest>) -> Result<Json<StructuralNode>, ApiError> {
+    if req.line == 0 || req.column == 0 { return Err(ApiError::BadRequest("line and column are 1-based".into())); }
+    let workspace = readable_workspace(&state, &req.workspace)?;
+    let (_, path) = existing_file(workspace, &req.path)?;
+    let bytes = read_bounded(&path)?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| ApiError::Unsupported("file is not UTF-8".into()))?;
+    let (_, language) = language_for(&path)?;
+    let mut parser = Parser::new();
+    parser.set_language(&language).map_err(|e| ApiError::Internal(format!("failed to load tree-sitter grammar: {e}")))?;
+    let tree = parser.parse(text, None).ok_or_else(|| ApiError::Internal("tree-sitter returned no parse tree".into()))?;
+    let line = text.lines().nth(req.line - 1).ok_or_else(|| ApiError::BadRequest("line is outside document".into()))?;
+    let byte_column = scalar_column_to_byte(line, req.column)?;
+    let point = Point::new(req.line - 1, byte_column);
+    let mut node = tree.root_node().descendant_for_point_range(point, point).ok_or_else(|| ApiError::NotFound("no syntax node at position".into()))?;
+    while !node.is_named() {
+        node = node.parent().ok_or_else(|| ApiError::NotFound("no named syntax node at position".into()))?;
+    }
+    Ok(Json(render_node(node, text)))
+}
+
+pub async fn replace_node(State(state): State<AppState>, Json(req): Json<ReplaceNodeRequest>) -> Result<Json<ReplaceNodeResponse>, ApiError> {
+    let workspace = writable_workspace(&state, &req.workspace)?;
+    let (root, path) = existing_file(workspace, &req.path)?;
+    reject_symlink(&path)?;
+    let bytes = read_bounded(&path)?;
+    let old_sha = digest(&bytes);
+    if !req.expected_sha256.eq_ignore_ascii_case(&old_sha) { return Err(ApiError::Conflict(format!("file changed: expected {}, current {old_sha}", req.expected_sha256))); }
+    let text = std::str::from_utf8(&bytes).map_err(|_| ApiError::Unsupported("file is not UTF-8".into()))?;
+    if req.start_byte >= req.end_byte || req.end_byte > bytes.len() || !text.is_char_boundary(req.start_byte) || !text.is_char_boundary(req.end_byte) {
+        return Err(ApiError::BadRequest("node byte range is invalid or not on UTF-8 boundaries".into()));
+    }
+    let (_, language) = language_for(&path)?;
+    let mut parser = Parser::new();
+    parser.set_language(&language).map_err(|e| ApiError::Internal(format!("failed to load tree-sitter grammar: {e}")))?;
+    let tree = parser.parse(text, None).ok_or_else(|| ApiError::Internal("tree-sitter returned no parse tree".into()))?;
+    let node = exact_named_node(tree.root_node(), req.start_byte, req.end_byte).ok_or_else(|| ApiError::Conflict("the requested range no longer identifies an exact named syntax node".into()))?;
+    if let Some(expected) = req.expected_kind.as_deref() {
+        if node.kind() != expected { return Err(ApiError::Conflict(format!("node kind changed: expected {expected:?}, current {:?}", node.kind()))); }
+    }
+    let mut updated = String::with_capacity(text.len() - (req.end_byte - req.start_byte) + req.new.len());
+    updated.push_str(&text[..req.start_byte]);
+    updated.push_str(&req.new);
+    updated.push_str(&text[req.end_byte..]);
+    if updated.len() > MAX_FILE_BYTES { return Err(ApiError::BadRequest("updated file exceeds 8 MiB".into())); }
+    let response = ReplaceNodeResponse {
+        path: relative(&root, &path), kind: node.kind().into(), old_sha256: old_sha,
+        new_sha256: digest(updated.as_bytes()), dry_run: req.dry_run,
+        preview: compact_preview(&text[req.start_byte..req.end_byte], &req.new),
+    };
+    if !req.dry_run {
+        let permissions = fs::metadata(&path).map_err(map_io)?.permissions();
+        atomic_write(&path, updated.as_bytes(), permissions)?;
+        state.events.emit("code.structural_edit.applied", Some(&req.workspace), format!("replaced {} in {}", node.kind(), response.path), serde_json::json!({"path":response.path,"kind":node.kind(),"old_sha256":response.old_sha256,"new_sha256":response.new_sha256})).await;
+    } else {
+        state.events.emit("code.structural_edit.previewed", Some(&req.workspace), format!("previewed {} replacement in {}", node.kind(), response.path), serde_json::json!({"path":response.path,"kind":node.kind()})).await;
+    }
+    Ok(Json(response))
+}
+
+fn collect_nodes(node: Node<'_>, text: &str, kind: Option<&str>, name: Option<&str>, limit: usize, out: &mut Vec<StructuralNode>) {
+    if out.len() >= limit { return; }
+    if node.is_named() && interesting(node.kind()) {
+        let rendered = render_node(node, text);
+        let kind_ok = kind.is_none_or(|v| rendered.kind == v);
+        let name_ok = name.is_none_or(|v| rendered.name.as_deref() == Some(v));
+        if kind_ok && name_ok { out.push(rendered); }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_nodes(child, text, kind, name, limit, out);
+        if out.len() >= limit { break; }
+    }
+}
+
+fn interesting(kind: &str) -> bool {
+    kind.contains("function") || kind.contains("method") || kind.contains("class") || kind.contains("struct") || kind.contains("enum") || kind.contains("trait") || kind.contains("interface") || kind.contains("type") || kind.contains("module") || kind.contains("impl") || kind.contains("declaration")
+}
+
+fn render_node(node: Node<'_>, text: &str) -> StructuralNode {
+    let name = node.child_by_field_name("name").and_then(|n| n.utf8_text(text.as_bytes()).ok()).map(str::to_owned);
+    let start = node.start_position(); let end = node.end_position();
+    let preview = node.utf8_text(text.as_bytes()).unwrap_or("").lines().next().unwrap_or("").trim().chars().take(240).collect();
+    StructuralNode { kind: node.kind().into(), name, start_byte: node.start_byte(), end_byte: node.end_byte(), start_line:start.row+1, start_column:start.column+1, end_line:end.row+1, end_column:end.column+1, preview }
+}
+
+fn exact_named_node(root: Node<'_>, start: usize, end: usize) -> Option<Node<'_>> {
+    let node = root.descendant_for_byte_range(start, end)?;
+    let mut current = Some(node);
+    while let Some(n) = current {
+        if n.is_named() && n.start_byte() == start && n.end_byte() == end { return Some(n); }
+        current = n.parent();
+    }
+    None
+}
+
+fn language_for(path: &Path) -> Result<(&'static str, Language), ApiError> {
+    let ext = path.extension().and_then(|v| v.to_str()).unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "rs" => Ok(("rust", tree_sitter_rust::LANGUAGE.into())),
+        "go" => Ok(("go", tree_sitter_go::LANGUAGE.into())),
+        "py" => Ok(("python", tree_sitter_python::LANGUAGE.into())),
+        "js" | "jsx" | "mjs" | "cjs" => Ok(("javascript", tree_sitter_javascript::LANGUAGE.into())),
+        "ts" => Ok(("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())),
+        "tsx" => Ok(("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
+        _ => Err(ApiError::Unsupported(format!("no tree-sitter grammar is bundled for .{ext}"))),
+    }
+}
+
+fn scalar_column_to_byte(line: &str, column: usize) -> Result<usize, ApiError> {
+    let wanted = column - 1;
+    if wanted == line.chars().count() { return Ok(line.len()); }
+    line.char_indices().nth(wanted).map(|(i, _)| i).ok_or_else(|| ApiError::BadRequest("column is outside line".into()))
+}
+
+fn readable_workspace<'a>(state: &'a AppState, name: &str) -> Result<&'a WorkspaceConfig, ApiError> {
+    let ws = state.config.workspaces.get(name).ok_or_else(|| ApiError::NotFound(format!("workspace {name:?} is not configured")))?;
+    if !ws.capabilities.fs_read { return Err(ApiError::Forbidden("workspace does not allow filesystem reads".into())); }
+    Ok(ws)
+}
+fn writable_workspace<'a>(state: &'a AppState, name: &str) -> Result<&'a WorkspaceConfig, ApiError> {
+    let ws = readable_workspace(state, name)?; if !ws.capabilities.fs_write { return Err(ApiError::Forbidden("workspace does not allow filesystem writes".into())); } Ok(ws)
+}
+fn existing_file(ws: &WorkspaceConfig, requested: &str) -> Result<(PathBuf,PathBuf),ApiError> {
+    let rel=Path::new(requested); if requested.is_empty()||rel.is_absolute()||rel.components().any(|c|matches!(c,Component::ParentDir|Component::RootDir|Component::Prefix(_))){return Err(ApiError::BadRequest("path must be workspace-relative".into()));}
+    let root=fs::canonicalize(&ws.root).map_err(map_io)?; let raw=root.join(rel); reject_symlink(&raw)?; let path=fs::canonicalize(raw).map_err(map_io)?; if !path.starts_with(&root)||!path.is_file(){return Err(ApiError::Forbidden("path escapes workspace or is not a file".into()));} Ok((root,path))
+}
+fn read_bounded(path:&Path)->Result<Vec<u8>,ApiError>{let m=fs::metadata(path).map_err(map_io)?;if m.len()>MAX_FILE_BYTES as u64{return Err(ApiError::BadRequest("file exceeds 8 MiB".into()));}fs::read(path).map_err(map_io)}
+fn reject_symlink(path:&Path)->Result<(),ApiError>{if fs::symlink_metadata(path).map_err(map_io)?.file_type().is_symlink(){Err(ApiError::Forbidden("symlink files are not accepted".into()))}else{Ok(())}}
+fn atomic_write(path:&Path,content:&[u8],permissions:fs::Permissions)->Result<(),ApiError>{let parent=path.parent().ok_or_else(||ApiError::BadRequest("file has no parent".into()))?;let mut temp=NamedTempFile::new_in(parent).map_err(map_io)?;temp.write_all(content).map_err(map_io)?;temp.as_file().sync_all().map_err(map_io)?;temp.as_file().set_permissions(permissions).map_err(map_io)?;temp.persist(path).map_err(|e|map_io(e.error))?;Ok(())}
+fn digest(bytes:&[u8])->String{format!("{:x}",Sha256::digest(bytes))}
+fn relative(root:&Path,path:&Path)->String{path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned()}
+fn compact_preview(old:&str,new:&str)->String{let mut s=String::new();for l in old.lines().take(20){s.push_str("- ");s.push_str(l);s.push('\n');}for l in new.lines().take(20){s.push_str("+ ");s.push_str(l);s.push('\n');}if s.len()>16384{s.truncate(16384);}s}
+fn default_true()->bool{true}
+fn map_io(e:std::io::Error)->ApiError{match e.kind(){std::io::ErrorKind::NotFound=>ApiError::NotFound(e.to_string()),std::io::ErrorKind::PermissionDenied=>ApiError::Forbidden(e.to_string()),_=>ApiError::Internal(e.to_string())}}
