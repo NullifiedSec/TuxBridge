@@ -1,0 +1,16 @@
+[server]
+listen = "127.0.0.1:8787"
+
+[auth]
+api_key_env = "TUXBRIDGE_API_KEY"
+
+[workspaces.example]
+root = "/absolute/path/to/workspace"
+
+[workspaces.example.capabilities]
+fs_read = true
+fs_write = false
+commands = false
+git_read = true
+git_write = false
+git_network = false
