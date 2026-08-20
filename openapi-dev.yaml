@@ -1,0 +1,400 @@
+openapi: 3.1.0
+info:
+  title: TuxBridge Dev GPT API
+  version: 0.1.0
+  description: Role-scoped software-development surface. Use with TUXBRIDGE_DEV_API_KEY.
+servers:
+  - url: https://tuxbridge.example.com
+security:
+  - bearerAuth: []
+paths:
+  /v1/project/inspect:
+    post:
+      operationId: inspectProject
+      summary: Inspect manifests, package managers, and project structure.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Project inspection. } }
+  /v1/code/map:
+    post:
+      operationId: getRepositoryMap
+      summary: Get a compact repository orientation map and changed-file list.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Repository map. } }
+  /v1/code/context:
+    post:
+      operationId: getCodeContext
+      summary: Read numbered code context with a full-file SHA-256.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CodeContextRequest' } } }
+      responses: { '200': { description: Code context. } }
+  /v1/code/structure:
+    post:
+      operationId: getSyntaxStructure
+      summary: Parse exact Tree-sitter syntax-node ranges.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/StructureRequest' } } }
+      responses: { '200': { description: Structural nodes. } }
+  /v1/code/node-at:
+    post:
+      operationId: getSyntaxNodeAtPosition
+      summary: Get the smallest named syntax node at a source position.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PositionRequest' } } }
+      responses: { '200': { description: Syntax node. } }
+  /v1/code/references:
+    post:
+      operationId: findCodeReferences
+      summary: Find identifier-boundary text references in a workspace or subtree.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReferenceRequest' } } }
+      responses: { '200': { description: Reference locations. } }
+  /v1/code/edit-plan:
+    post:
+      operationId: applyCodeEditPlan
+      summary: Preview or apply a hash-guarded multi-file edit plan.
+      description: Use dry_run first. session_id automatically tracks original/resulting hashes for safe rollback.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EditPlanRequest' } } }
+      responses:
+        '200': { description: Per-file edit results and hashes. }
+        '409': { description: Stale hash or ambiguous edit. }
+  /v1/code/replace-node:
+    post:
+      operationId: replaceSyntaxNode
+      summary: Preview or replace one exact Tree-sitter node with hash protection.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReplaceNodeRequest' } } }
+      responses:
+        '200': { description: Structural edit result. }
+        '409': { description: Stale hash or stale syntax range. }
+  /v1/code/verification-plan:
+    post:
+      operationId: planCodeVerification
+      summary: Recommend fast and full verification commands for changed files.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/VerificationRequest' } } }
+      responses: { '200': { description: Verification plan. } }
+  /v1/code/sessions:
+    get:
+      operationId: listCodingSessions
+      summary: List coding sessions and rollback-safety state.
+      responses: { '200': { description: Coding sessions. } }
+    post:
+      operationId: createCodingSession
+      summary: Create a coherent coding session before making changes.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateSessionRequest' } } }
+      responses: { '200': { description: Created coding session. } }
+  /v1/code/sessions/{id}:
+    get:
+      operationId: getCodingSession
+      summary: Inspect one coding session and its tracked hashes.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Coding session. } }
+  /v1/code/sessions/{id}/finalize:
+    post:
+      operationId: finalizeCodingSession
+      summary: Finalize a successful coding session.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Finalized session. } }
+  /v1/code/sessions/{id}/rollback:
+    post:
+      operationId: rollbackCodingSession
+      summary: Hash-safely restore files changed by this session only.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200': { description: Restored paths. }
+        '409': { description: A tracked file changed after the agent wrote it. }
+  /v1/lsp/servers:
+    get:
+      operationId: listLanguageServers
+      summary: List language-server mappings and executable availability.
+      responses: { '200': { description: LSP readiness. } }
+  /v1/lsp/definition:
+    post:
+      operationId: goToDefinition
+      summary: Resolve a symbol definition semantically.
+      requestBody: { $ref: '#/components/requestBodies/PositionBody' }
+      responses: { '200': { description: Definition locations. } }
+  /v1/lsp/references:
+    post:
+      operationId: findSemanticReferences
+      summary: Find semantic references with the language server.
+      requestBody: { $ref: '#/components/requestBodies/PositionBody' }
+      responses: { '200': { description: Reference locations. } }
+  /v1/lsp/hover:
+    post:
+      operationId: getSemanticHover
+      summary: Get semantic type, signature, and documentation hover data.
+      requestBody: { $ref: '#/components/requestBodies/PositionBody' }
+      responses: { '200': { description: Hover result. } }
+  /v1/lsp/document-symbols:
+    post:
+      operationId: getSemanticDocumentSymbols
+      summary: Get semantic document symbols.
+      requestBody: { $ref: '#/components/requestBodies/DocumentBody' }
+      responses: { '200': { description: Document symbols. } }
+  /v1/lsp/workspace-symbols:
+    post:
+      operationId: searchSemanticWorkspaceSymbols
+      summary: Search indexed semantic symbols across the workspace.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceSymbolRequest' } } }
+      responses: { '200': { description: Workspace symbols. } }
+  /v1/lsp/diagnostics:
+    post:
+      operationId: getLanguageDiagnostics
+      summary: Collect language-server diagnostics for a document.
+      requestBody: { $ref: '#/components/requestBodies/DocumentBody' }
+      responses: { '200': { description: Language diagnostics. } }
+  /v1/lsp/rename:
+    post:
+      operationId: renameSemanticSymbol
+      summary: Preview or apply a safe semantic rename.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RenameRequest' } } }
+      responses:
+        '200': { description: Rename edit result. }
+        '409': { description: File changed after preflight. }
+  /v1/lsp/format:
+    post:
+      operationId: formatWithLanguageServer
+      summary: Preview or safely apply language-server formatting.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/FormatRequest' } } }
+      responses: { '200': { description: Formatting result. } }
+  /v1/commands/run:
+    post:
+      operationId: runCommand
+      summary: Run a synchronous argv command for builds, tests, lint, and checks.
+      description: Requires commands capability and an unrestricted security profile.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CommandRequest' } } }
+      responses:
+        '200': { description: Command result with structured diagnostics. }
+        '403': { description: Blocked by workspace or security profile. }
+  /v1/git/status:
+    post:
+      operationId: gitStatus
+      summary: Read structured working-tree status.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Git status. } }
+  /v1/git/diff:
+    post:
+      operationId: gitDiff
+      summary: Read a bounded staged or unstaged diff.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GitDiffRequest' } } }
+      responses: { '200': { description: Diff content. } }
+  /v1/git/log:
+    post:
+      operationId: gitLog
+      summary: Read recent Git history.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GitLogRequest' } } }
+      responses: { '200': { description: Commit history. } }
+  /v1/git/add:
+    post:
+      operationId: gitAdd
+      summary: Stage explicit repository-relative paths.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GitAddRequest' } } }
+      responses: { '200': { description: Git result. } }
+  /v1/git/commit:
+    post:
+      operationId: gitCommit
+      summary: Commit staged changes with hooks disabled.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GitCommitRequest' } } }
+      responses: { '200': { description: Git result. } }
+  /v1/git/push:
+    post:
+      operationId: gitPush
+      summary: Non-force push one local branch to an existing remote.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GitPushRequest' } } }
+      responses: { '200': { description: Git result. } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  requestBodies:
+    WorkspaceBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceRequest' } } }
+    PositionBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/PositionRequest' } } }
+    DocumentBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/DocumentRequest' } } }
+  schemas:
+    WorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string, minLength: 1 } }
+    CodeContextRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties:
+        workspace: { type: string, minLength: 1 }
+        path: { type: string, minLength: 1 }
+        start_line: { type: integer, minimum: 1 }
+        end_line: { type: integer, minimum: 1 }
+        context_before: { type: integer, minimum: 0 }
+        context_after: { type: integer, minimum: 0 }
+        max_bytes: { type: integer, minimum: 1, maximum: 524288 }
+    StructureRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        kind: { type: string }
+        name: { type: string }
+        max_nodes: { type: integer, minimum: 1, maximum: 4000 }
+    PositionRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path, line, column]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        line: { type: integer, minimum: 1 }
+        column: { type: integer, minimum: 1 }
+    DocumentRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties: { workspace: { type: string }, path: { type: string } }
+    ReferenceRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, identifier]
+      properties:
+        workspace: { type: string }
+        identifier: { type: string, minLength: 1, maxLength: 256 }
+        path: { type: string }
+        max_results: { type: integer, minimum: 1, maximum: 2000 }
+    EditPlanRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, files]
+      properties:
+        workspace: { type: string }
+        session_id: { type: string }
+        dry_run: { type: boolean, default: false }
+        files:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, expected_sha256, edits]
+            properties:
+              path: { type: string }
+              expected_sha256: { type: string, minLength: 64, maxLength: 64 }
+              edits:
+                type: array
+                minItems: 1
+                maxItems: 256
+                items:
+                  oneOf:
+                    - { type: object, required: [kind, old, new], properties: { kind: { const: replace_exact }, old: { type: string }, new: { type: string } } }
+                    - { type: object, required: [kind, start_line, end_line, new], properties: { kind: { const: replace_lines }, start_line: { type: integer, minimum: 1 }, end_line: { type: integer, minimum: 1 }, new: { type: string } } }
+                    - { type: object, required: [kind, line, new], properties: { kind: { const: insert_before }, line: { type: integer, minimum: 1 }, new: { type: string } } }
+                    - { type: object, required: [kind, line, new], properties: { kind: { const: insert_after }, line: { type: integer, minimum: 1 }, new: { type: string } } }
+    ReplaceNodeRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path, expected_sha256, start_byte, end_byte, new]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        expected_sha256: { type: string, minLength: 64, maxLength: 64 }
+        start_byte: { type: integer, minimum: 0 }
+        end_byte: { type: integer, minimum: 1 }
+        expected_kind: { type: string }
+        new: { type: string }
+        dry_run: { type: boolean, default: true }
+    VerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties:
+        workspace: { type: string }
+        changed_paths: { type: array, items: { type: string }, default: [] }
+    CreateSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string }, title: { type: string } }
+    WorkspaceSymbolRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, query]
+      properties: { workspace: { type: string }, query: { type: string } }
+    RenameRequest:
+      allOf:
+        - { $ref: '#/components/schemas/PositionRequest' }
+        - type: object
+          required: [new_name]
+          properties: { new_name: { type: string, minLength: 1 }, dry_run: { type: boolean, default: true } }
+    FormatRequest:
+      allOf:
+        - { $ref: '#/components/schemas/DocumentRequest' }
+        - type: object
+          properties: { dry_run: { type: boolean, default: true } }
+    CommandRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, argv]
+      properties:
+        workspace: { type: string }
+        argv: { type: array, minItems: 1, maxItems: 256, items: { type: string } }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+    GitDiffRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string }, staged: { type: boolean }, path: { type: string }, max_bytes: { type: integer, minimum: 1, maximum: 8388608 } }
+    GitLogRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string }, limit: { type: integer, minimum: 1, maximum: 200 } }
+    GitAddRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, paths]
+      properties: { workspace: { type: string }, paths: { type: array, minItems: 1, items: { type: string } } }
+    GitCommitRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, message]
+      properties: { workspace: { type: string }, message: { type: string, minLength: 1 } }
+    GitPushRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, remote, branch]
+      properties: { workspace: { type: string }, remote: { type: string }, branch: { type: string } }
