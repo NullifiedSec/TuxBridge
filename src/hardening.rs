@@ -9,10 +9,16 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::state::AppState;
+use crate::{security::SecurityProfile, state::AppState};
 
 #[derive(Serialize)]
 struct BusyResponse {
+    error: &'static str,
+    message: &'static str,
+}
+
+#[derive(Serialize)]
+struct PolicyResponse {
     error: &'static str,
     message: &'static str,
 }
@@ -22,6 +28,24 @@ pub async fn protect_host(
     request: Request,
     next: Next,
 ) -> Response {
+    let path = request.uri().path().to_owned();
+
+    // In the default profile the only command endpoint is /v1/commands/raw,
+    // whose parser rejects shell grammar and enforces the executable allowlist.
+    // Blocking the argv/background APIs here prevents them from bypassing that policy.
+    if state.config.security.profile == SecurityProfile::Default
+        && matches!(path.as_str(), "/v1/commands/run" | "/v1/commands/start")
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(PolicyResponse {
+                error: "security_profile_restriction",
+                message: "default profile permits only constrained raw commands; switch to loose or i_want_to_nuke_my_server for unrestricted argv/background execution",
+            }),
+        )
+            .into_response();
+    }
+
     let permit = match state.request_gate.clone().try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => {
@@ -38,7 +62,6 @@ pub async fn protect_host(
 
     let request_id = state.next_request_id();
     let method = request.method().clone();
-    let path = request.uri().path().to_owned();
     let started = Instant::now();
 
     let mut response = next.run(request).await;
