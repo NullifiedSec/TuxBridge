@@ -12,7 +12,7 @@ Credential: `TUXBRIDGE_DEV_API_KEY`
 
 Role: `developer`
 
-Exactly 30 operations. It is optimized for the normal software-engineering loop: repository orientation, focused code reads, Tree-sitter structure, LSP semantics, hash-guarded edits, coding sessions/rollback, verification commands, diff/history, stage/commit/push.
+Exactly 30 GPT operations. It is optimized for the normal software-engineering loop: repository orientation, focused code reads, Tree-sitter structure, LSP semantics, hash-guarded edits, coding sessions/rollback, verification commands, diff/history, stage/commit/push.
 
 The deliberately omitted heuristic symbol-outline endpoint is redundant with Tree-sitter and LSP and would consume one of the GPT Actions 30-operation slots.
 
@@ -34,19 +34,26 @@ Credential: `TUXBRIDGE_OPS_API_KEY`
 
 Role: `operator`
 
-Exactly 30 operations. It is optimized for host supervision and operations: Mission Control activity/approvals, system/process/listener/disk diagnostics, workspace file maintenance, foreground/background commands and jobs, plus operational Git status/branch/fetch/pull flows.
+Exactly 30 GPT operations. It is optimized for host supervision and operations: Mission Control activity/approvals, system/process/listener/disk diagnostics, workspace file maintenance, foreground/background commands and jobs, plus operational Git status/branch/fetch/pull flows.
+
+The operator role also receives a small number of **support routes** that do not appear as GPT Actions and therefore do not consume operation slots. These are read-only endpoints needed by Mission Control, such as the SSE event stream, LSP/session inventory, audit reads, and Git diff viewing.
 
 ## Administrator credential
 
 `TUXBRIDGE_API_KEY` remains the backwards-compatible administrator credential. It is implicitly assigned the `admin` role and can call the complete TuxBridge API. Existing installations therefore do not lose access when upgrading to role-scoped principals.
 
-Use the administrator key for emergency/manual access and, when desired, Mission Control. Prefer occupation keys in GPT Actions so a compromised or misdirected GPT has a smaller server-side blast radius.
+Use the administrator key for emergency/manual access. Prefer occupation keys in GPT Actions so a compromised or misdirected GPT has a smaller server-side blast radius.
 
 ## One authorization source of truth
 
-`openapi.yaml` is the canonical complete API description.
+`openapi.yaml` is the canonical complete Action API description.
 
-`openapi-profiles.json` lists the `operationId` values assigned to each occupation. TuxBridge embeds both files into the binary at compile time and constructs its role policy from them during startup. Startup fails if a profile references a missing operation, duplicates an operation, uses an unknown profile, or exceeds 30 operations.
+`openapi-profiles.json` contains two concepts per occupation:
+
+- `operations` — canonical `operationId` values exposed to that GPT; these are limited to 30;
+- `support_routes` — explicit method/path permissions for non-Action clients such as Mission Control; these do not count toward the GPT operation limit.
+
+TuxBridge embeds both the canonical OpenAPI document and profile manifest into the binary at compile time and constructs its role policy from them during startup. Startup fails if a profile references a missing operation, duplicates an operation, uses an unknown profile, or exceeds 30 GPT operations.
 
 This means the GPT schema split is not cosmetic. The same occupation manifest that defines the Action surface controls which authenticated role may invoke which HTTP method/path.
 
@@ -60,7 +67,7 @@ Run:
 python3 scripts/generate_openapi_profiles.py
 ```
 
-to regenerate standalone occupation schemas by filtering canonical `openapi.yaml` through `openapi-profiles.json`.
+to regenerate standalone occupation schemas by filtering canonical `openapi.yaml` through the `operations` arrays in `openapi-profiles.json`.
 
 CI runs:
 
@@ -68,7 +75,7 @@ CI runs:
 python3 scripts/generate_openapi_profiles.py --check
 ```
 
-which verifies that each committed occupation schema exposes exactly the manifest operation set, that every route/method matches canonical OpenAPI, and that no profile exceeds the 30-operation limit.
+which verifies that each committed occupation schema exposes exactly the manifest operation set, every route/method matches canonical OpenAPI, and no profile exceeds the 30-operation limit. The checker accepts both the hand-readable YAML form and the JSON-compatible YAML emitted by the generator.
 
 ## Configuration
 
