@@ -8,6 +8,11 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /v1/lsp/servers:
+    get:
+      operationId: listLanguageServers
+      summary: List configured and built-in language-server mappings with executable availability.
+      responses: { '200': { description: Language-server readiness. } }
   /v1/lsp/definition:
     post:
       operationId: goToDefinition
