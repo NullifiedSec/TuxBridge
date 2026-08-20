@@ -2,7 +2,7 @@ use std::{env, net::SocketAddr, path::PathBuf};
 
 use axum::{
     Json, Router, middleware,
-    routing::get,
+    routing::{get, post},
 };
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -10,6 +10,7 @@ use tokio::net::TcpListener;
 mod auth;
 mod config;
 mod error;
+mod fs;
 mod state;
 mod system;
 mod workspace;
@@ -46,6 +47,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/system", get(system::system_info))
         .route("/v1/workspaces", get(workspace::list_workspaces))
         .route("/v1/workspaces/{name}", get(workspace::get_workspace))
+        .route("/v1/fs/list", post(fs::list_directory))
+        .route("/v1/fs/stat", post(fs::stat_path))
+        .route("/v1/fs/read", post(fs::read_file))
+        .route("/v1/fs/read-batch", post(fs::read_files))
+        .route("/v1/fs/search", post(fs::search_files))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,
