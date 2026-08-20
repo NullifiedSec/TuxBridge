@@ -10,11 +10,92 @@ USER_NAME="tuxbridge"
 HOME_DIR="/home/${USER_NAME}"
 CONFIG_DIR="/etc/tuxbridge"
 STATE_DIR="/var/lib/tuxbridge"
-BINARY_SRC="${1:-./target/release/tuxbridge}"
 BINARY_DST="/usr/local/bin/tuxbridge"
 SERVICE_DST="/etc/systemd/system/tuxbridge.service"
 SUDOERS_DST="/etc/sudoers.d/tuxbridge"
 ENV_FILE="$CONFIG_DIR/tuxbridge.env"
+BINARY_SRC="./target/release/tuxbridge"
+SUBDOMAIN=""
+
+usage() {
+  cat <<'EOF'
+Usage:
+  sudo bash ./install.sh [BINARY_PATH] [-subdomain HOSTNAME]
+
+Examples:
+  sudo bash ./install.sh
+  sudo bash ./install.sh ./target/release/tuxbridge
+  sudo bash ./install.sh -subdomain tuxbridge.example.com
+  sudo bash ./install.sh ./target/release/tuxbridge -subdomain tuxbridge.example.com
+
+Options:
+  -subdomain, --subdomain HOSTNAME
+      Print a ready-to-paste Caddy reverse-proxy block after installation.
+      TuxBridge itself remains bound to 127.0.0.1:8787.
+
+  -h, --help
+      Show this help text.
+EOF
+}
+
+positional_seen=false
+while (( $# > 0 )); do
+  case "$1" in
+    -subdomain|--subdomain)
+      if (( $# < 2 )); then
+        echo "$1 requires a hostname." >&2
+        usage >&2
+        exit 2
+      fi
+      SUBDOMAIN="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      if (( $# > 1 )); then
+        echo "Only one positional binary path is supported." >&2
+        exit 2
+      fi
+      if (( $# == 1 )); then
+        BINARY_SRC="$1"
+        positional_seen=true
+        shift
+      fi
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [[ "$positional_seen" == true ]]; then
+        echo "Only one positional binary path is supported." >&2
+        usage >&2
+        exit 2
+      fi
+      BINARY_SRC="$1"
+      positional_seen=true
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$SUBDOMAIN" ]]; then
+  # Accept DNS hostnames only. This is deliberately strict because the value is
+  # rendered directly into a Caddyfile example at the end of installation.
+  if (( ${#SUBDOMAIN} > 253 )) \
+    || [[ "$SUBDOMAIN" == .* || "$SUBDOMAIN" == *. ]] \
+    || [[ ! "$SUBDOMAIN" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
+    echo "Invalid subdomain/hostname: $SUBDOMAIN" >&2
+    echo "Expected a DNS hostname such as tuxbridge.example.com" >&2
+    exit 2
+  fi
+  SUBDOMAIN="${SUBDOMAIN,,}"
+fi
 
 if [[ ! -x "$BINARY_SRC" ]]; then
   echo "Built binary not found or not executable: $BINARY_SRC" >&2
@@ -220,3 +301,25 @@ echo "  TUXBRIDGE_DEV_API_KEY    -> openapi-dev.yaml"
 echo "  TUXBRIDGE_REVIEW_API_KEY -> openapi-review.yaml"
 echo "  TUXBRIDGE_OPS_API_KEY    -> openapi-ops.yaml"
 echo "  TUXBRIDGE_API_KEY        -> administrator / Mission Control fallback"
+
+if [[ -n "$SUBDOMAIN" ]]; then
+  cat <<EOF
+
+Caddy reverse-proxy block for $SUBDOMAIN
+----------------------------------------
+$SUBDOMAIN {
+    reverse_proxy 127.0.0.1:8787
+}
+----------------------------------------
+
+Add that block to your Caddyfile after pointing DNS for $SUBDOMAIN at this host.
+Then validate and reload Caddy, for example:
+  sudo caddy validate --config /etc/caddy/Caddyfile
+  sudo systemctl reload caddy
+
+Public TuxBridge base URL:
+  https://$SUBDOMAIN
+
+Use that HTTPS origin as the server URL in the GPT Action OpenAPI schemas.
+EOF
+fi
