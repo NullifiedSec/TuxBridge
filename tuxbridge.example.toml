@@ -2,7 +2,21 @@
 listen = "127.0.0.1:8787"
 
 [auth]
+# Backwards-compatible administrator credential. This key can call every API.
 api_key_env = "TUXBRIDGE_API_KEY"
+
+# Optional role-scoped credentials for separate GPT occupations.
+[auth.principals.eris_dev]
+api_key_env = "TUXBRIDGE_DEV_API_KEY"
+roles = ["developer"]
+
+[auth.principals.eris_review]
+api_key_env = "TUXBRIDGE_REVIEW_API_KEY"
+roles = ["reviewer"]
+
+[auth.principals.eris_ops]
+api_key_env = "TUXBRIDGE_OPS_API_KEY"
+roles = ["operator"]
 
 [security]
 # default | loose | i_want_to_nuke_my_server
@@ -13,7 +27,6 @@ default_command_allowlist = ["pwd", "ls", "cat", "head", "tail", "wc", "grep", "
 # Exact protected API paths. When a request hits one of these without a consumed
 # approval token TuxBridge returns HTTP 428 with an approval_id. Approve it in
 # Mission Control and retry with X-TuxBridge-Approval-Id.
-# Good candidates in unrestricted profiles:
 # required_paths = ["/v1/git/push", "/v1/commands/raw"]
 required_paths = []
 
@@ -36,16 +49,6 @@ job_retention_seconds = 3600
 # argv = ["clangd", "--background-index", "--clang-tidy"]
 # extensions = ["c", "h", "cc", "cpp", "cxx", "hpp"]
 # language_id = "cpp"
-#
-# [lsp.servers.vue]
-# enabled = true
-# argv = ["vue-language-server", "--stdio"]
-# extensions = ["vue"]
-# language_id = "vue"
-#
-# Initialization options may be expressed as nested TOML tables, e.g.
-# [lsp.servers.example.initialization_options]
-# someFlag = true
 
 [workspaces.example]
 root = "/absolute/path/to/workspace"
