@@ -64,6 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/system/processes", get(bonus::processes))
         .route("/v1/system/listeners", get(bonus::listeners))
         .route("/v1/system/disks", get(bonus::disks))
+        .route("/v1/security/profile", get(security::get_security_profile))
         .route("/v1/doctor", get(doctor::doctor))
         .route("/v1/workspaces", get(workspace::list_workspaces))
         .route("/v1/workspaces/{name}", get(workspace::get_workspace))
