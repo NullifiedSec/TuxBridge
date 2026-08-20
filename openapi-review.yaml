@@ -1,0 +1,225 @@
+openapi: 3.1.0
+info:
+  title: TuxBridge Review GPT API
+  version: 0.1.0
+  description: Read-only investigation and review surface. Use with TUXBRIDGE_REVIEW_API_KEY.
+servers:
+  - url: https://tuxbridge.example.com
+security:
+  - bearerAuth: []
+paths:
+  /v1/workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List configured workspaces and capabilities.
+      responses: { '200': { description: Workspace summaries. } }
+  /v1/workspaces/{name}:
+    get:
+      operationId: getWorkspace
+      summary: Inspect one configured workspace.
+      parameters: [ { name: name, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Workspace metadata. } }
+  /v1/project/inspect:
+    post:
+      operationId: inspectProject
+      summary: Inspect manifests, package managers, and project structure.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Project inspection. } }
+  /v1/code/map:
+    post:
+      operationId: getRepositoryMap
+      summary: Get a compact repository orientation map and changed-file list.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Repository map. } }
+  /v1/code/context:
+    post:
+      operationId: getCodeContext
+      summary: Read numbered code context with a full-file SHA-256.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CodeContextRequest' } } }
+      responses: { '200': { description: Code context. } }
+  /v1/code/structure:
+    post:
+      operationId: getSyntaxStructure
+      summary: Parse exact Tree-sitter syntax-node ranges.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/StructureRequest' } } }
+      responses: { '200': { description: Structural nodes. } }
+  /v1/code/node-at:
+    post:
+      operationId: getSyntaxNodeAtPosition
+      summary: Get the smallest named syntax node at a source position.
+      requestBody: { $ref: '#/components/requestBodies/PositionBody' }
+      responses: { '200': { description: Syntax node. } }
+  /v1/code/references:
+    post:
+      operationId: findCodeReferences
+      summary: Find identifier-boundary text references.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReferenceRequest' } } }
+      responses: { '200': { description: Reference locations. } }
+  /v1/code/verification-plan:
+    post:
+      operationId: planCodeVerification
+      summary: Recommend fast and full verification commands without executing them.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/VerificationRequest' } } }
+      responses: { '200': { description: Verification plan. } }
+  /v1/lsp/servers:
+    get:
+      operationId: listLanguageServers
+      summary: List language-server mappings and executable availability.
+      responses: { '200': { description: LSP readiness. } }
+  /v1/lsp/definition:
+    post:
+      operationId: goToDefinition
+      summary: Resolve a symbol definition semantically.
+      requestBody: { $ref: '#/components/requestBodies/PositionBody' }
+      responses: { '200': { description: Definition locations. } }
+  /v1/lsp/references:
+    post:
+      operationId: findSemanticReferences
+      summary: Find semantic references with the language server.
+      requestBody: { $ref: '#/components/requestBodies/PositionBody' }
+      responses: { '200': { description: Reference locations. } }
+  /v1/lsp/hover:
+    post:
+      operationId: getSemanticHover
+      summary: Get semantic type, signature, and documentation hover data.
+      requestBody: { $ref: '#/components/requestBodies/PositionBody' }
+      responses: { '200': { description: Hover result. } }
+  /v1/lsp/document-symbols:
+    post:
+      operationId: getSemanticDocumentSymbols
+      summary: Get semantic document symbols.
+      requestBody: { $ref: '#/components/requestBodies/DocumentBody' }
+      responses: { '200': { description: Document symbols. } }
+  /v1/lsp/workspace-symbols:
+    post:
+      operationId: searchSemanticWorkspaceSymbols
+      summary: Search indexed symbols across a workspace.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceSymbolRequest' } } }
+      responses: { '200': { description: Workspace symbols. } }
+  /v1/lsp/diagnostics:
+    post:
+      operationId: getLanguageDiagnostics
+      summary: Collect language-server diagnostics for a document.
+      requestBody: { $ref: '#/components/requestBodies/DocumentBody' }
+      responses: { '200': { description: Diagnostics. } }
+  /v1/git/status:
+    post:
+      operationId: gitStatus
+      summary: Read structured working-tree status.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Git status. } }
+  /v1/git/diff:
+    post:
+      operationId: gitDiff
+      summary: Read a bounded staged or unstaged diff.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GitDiffRequest' } } }
+      responses: { '200': { description: Diff content. } }
+  /v1/git/log:
+    post:
+      operationId: gitLog
+      summary: Read recent Git history.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/GitLogRequest' } } }
+      responses: { '200': { description: Commit history. } }
+  /v1/git/branches:
+    post:
+      operationId: gitBranches
+      summary: List local branches, SHAs, upstreams, and current state.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Branches. } }
+  /v1/git/head:
+    post:
+      operationId: gitHead
+      summary: Inspect HEAD, branch, upstream, and repository root.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: HEAD metadata. } }
+  /v1/git/remotes:
+    post:
+      operationId: gitRemotes
+      summary: List configured Git remotes.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Git remotes. } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  requestBodies:
+    WorkspaceBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceRequest' } } }
+    PositionBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/PositionRequest' } } }
+    DocumentBody:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/DocumentRequest' } } }
+  schemas:
+    WorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string, minLength: 1 } }
+    CodeContextRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties:
+        workspace: { type: string }
+        path: { type: string }
+        start_line: { type: integer, minimum: 1 }
+        end_line: { type: integer, minimum: 1 }
+        context_before: { type: integer, minimum: 0 }
+        context_after: { type: integer, minimum: 0 }
+        max_bytes: { type: integer, minimum: 1, maximum: 524288 }
+    StructureRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties: { workspace: { type: string }, path: { type: string }, kind: { type: string }, name: { type: string }, max_nodes: { type: integer, minimum: 1, maximum: 4000 } }
+    PositionRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path, line, column]
+      properties: { workspace: { type: string }, path: { type: string }, line: { type: integer, minimum: 1 }, column: { type: integer, minimum: 1 } }
+    DocumentRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, path]
+      properties: { workspace: { type: string }, path: { type: string } }
+    ReferenceRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, identifier]
+      properties: { workspace: { type: string }, identifier: { type: string, minLength: 1 }, path: { type: string }, max_results: { type: integer, minimum: 1, maximum: 2000 } }
+    VerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string }, changed_paths: { type: array, items: { type: string } } }
+    WorkspaceSymbolRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace, query]
+      properties: { workspace: { type: string }, query: { type: string } }
+    GitDiffRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string }, staged: { type: boolean }, path: { type: string }, max_bytes: { type: integer, minimum: 1, maximum: 8388608 } }
+    GitLogRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties: { workspace: { type: string }, limit: { type: integer, minimum: 1, maximum: 200 } }
