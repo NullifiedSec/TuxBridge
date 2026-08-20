@@ -1,31 +1,46 @@
 {
-  "dev": [
-    "inspectProject", "getRepositoryMap", "getCodeContext", "getSyntaxStructure",
-    "getSyntaxNodeAtPosition", "findCodeReferences", "applyCodeEditPlan",
-    "replaceSyntaxNode", "planCodeVerification", "listCodingSessions",
-    "createCodingSession", "getCodingSession", "finalizeCodingSession",
-    "rollbackCodingSession", "listLanguageServers", "goToDefinition",
-    "findSemanticReferences", "getSemanticHover", "getSemanticDocumentSymbols",
-    "searchSemanticWorkspaceSymbols", "getLanguageDiagnostics", "renameSemanticSymbol",
-    "formatWithLanguageServer", "runCommand", "gitStatus", "gitDiff", "gitLog",
-    "gitAdd", "gitCommit", "gitPush"
-  ],
-  "review": [
-    "listWorkspaces", "getWorkspace", "inspectProject", "getRepositoryMap",
-    "getCodeContext", "getSyntaxStructure", "getSyntaxNodeAtPosition",
-    "findCodeReferences", "planCodeVerification", "listLanguageServers",
-    "goToDefinition", "findSemanticReferences", "getSemanticHover",
-    "getSemanticDocumentSymbols", "searchSemanticWorkspaceSymbols",
-    "getLanguageDiagnostics", "gitStatus", "gitDiff", "gitLog", "gitBranches",
-    "gitHead", "gitRemotes"
-  ],
-  "ops": [
-    "getDashboardInfo", "listAgentEvents", "listApprovals", "approveOperation",
-    "denyOperation", "getSecurityProfile", "getSystemInfo", "getToolVersions",
-    "listProcesses", "listTcpListeners", "getDiskUsage", "runDoctor",
-    "listWorkspaces", "listDirectory", "statPath", "readFile", "searchFiles",
-    "hashFile", "writeFile", "patchFile", "runCommand", "runRawCommand",
-    "startCommand", "listCommandJobs", "getCommandJob", "cancelCommandJob",
-    "gitStatus", "gitBranches", "gitFetch", "gitPull"
-  ]
+  "dev": {
+    "operations": [
+      "inspectProject", "getRepositoryMap", "getCodeContext", "getSyntaxStructure",
+      "getSyntaxNodeAtPosition", "findCodeReferences", "applyCodeEditPlan",
+      "replaceSyntaxNode", "planCodeVerification", "listCodingSessions",
+      "createCodingSession", "getCodingSession", "finalizeCodingSession",
+      "rollbackCodingSession", "listLanguageServers", "goToDefinition",
+      "findSemanticReferences", "getSemanticHover", "getSemanticDocumentSymbols",
+      "searchSemanticWorkspaceSymbols", "getLanguageDiagnostics", "renameSemanticSymbol",
+      "formatWithLanguageServer", "runCommand", "gitStatus", "gitDiff", "gitLog",
+      "gitAdd", "gitCommit", "gitPush"
+    ],
+    "support_routes": []
+  },
+  "review": {
+    "operations": [
+      "listWorkspaces", "getWorkspace", "inspectProject", "getRepositoryMap",
+      "getCodeContext", "getSyntaxStructure", "getSyntaxNodeAtPosition",
+      "findCodeReferences", "planCodeVerification", "listLanguageServers",
+      "goToDefinition", "findSemanticReferences", "getSemanticHover",
+      "getSemanticDocumentSymbols", "searchSemanticWorkspaceSymbols",
+      "getLanguageDiagnostics", "gitStatus", "gitDiff", "gitLog", "gitBranches",
+      "gitHead", "gitRemotes"
+    ],
+    "support_routes": []
+  },
+  "ops": {
+    "operations": [
+      "getDashboardInfo", "listAgentEvents", "listApprovals", "approveOperation",
+      "denyOperation", "getSecurityProfile", "getSystemInfo", "getToolVersions",
+      "listProcesses", "listTcpListeners", "getDiskUsage", "runDoctor",
+      "listWorkspaces", "listDirectory", "statPath", "readFile", "searchFiles",
+      "hashFile", "writeFile", "patchFile", "runCommand", "runRawCommand",
+      "startCommand", "listCommandJobs", "getCommandJob", "cancelCommandJob",
+      "gitStatus", "gitBranches", "gitFetch", "gitPull"
+    ],
+    "support_routes": [
+      { "method": "GET", "path": "/v1/events/stream" },
+      { "method": "GET", "path": "/v1/audit/events" },
+      { "method": "GET", "path": "/v1/lsp/servers" },
+      { "method": "GET", "path": "/v1/code/sessions" },
+      { "method": "POST", "path": "/v1/git/diff" }
+    ]
+  }
 }
