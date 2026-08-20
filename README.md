@@ -15,6 +15,7 @@ The server, not the model-side schema, is the authorization boundary. Workspaces
 - safe workspace-relative directory listing, stat, bounded UTF-8 reads, batch reads, and recursive content search
 - full-file SHA-256 checks for optimistic concurrency
 - atomic create/replace and targeted exact-match patching
+- editor-grade code context, outline, reference, multi-file edit-plan, and task-discovery tools
 - separate explicitly configured user-files mounts with list/stat/read/hash/write/patch operations
 - project manifest/package-manager inspection
 - profile-aware raw command execution
@@ -74,6 +75,20 @@ curl -H "Authorization: Bearer $TUXBRIDGE_API_KEY" http://127.0.0.1:8787/v1/doct
 
 Every response is assigned an `X-TuxBridge-Request-Id`. The service logs request ID, method, path, response status, and duration; it deliberately does not log authorization headers or request bodies.
 
+## AI coding environment
+
+TuxBridge now has a dedicated editor protocol instead of expecting an agent to edit source code through shell quoting and `sed`.
+
+- `POST /v1/code/context` returns a numbered code window around a requested range plus the full-file SHA-256.
+- `POST /v1/code/symbols` returns a lightweight declaration outline for common languages. It is intentionally described as heuristic rather than compiler/LSP truth.
+- `POST /v1/code/references` performs bounded identifier-boundary reference search while skipping symlinks and common generated/vendor directories.
+- `POST /v1/code/edit-plan` dry-runs or applies a hash-guarded multi-file edit plan. Supported edits are exact replacement, inclusive line-range replacement, insertion before a line, and insertion after a line. All target hashes are checked before the first write and each file replacement is same-directory atomic.
+- `POST /v1/code/tasks` discovers likely test/check/lint/build/format argv commands from Cargo, Go, package.json, Python, and Composer project markers without executing them.
+
+A good agent loop is: inspect Git/project state → read focused context → inspect references/outline → dry-run one multi-file edit plan → apply it while hashes are current → inspect Git diff → discover and run appropriate verification tasks.
+
+See `CODING_ENVIRONMENT.md` for details and the language-intelligence roadmap. `openapi-code-tools.yaml` is a supplemental Action schema for the coding endpoints; it is kept separate from the large main schema until the first compile/schema-validation pass, after which the definitions can be mechanically merged.
+
 ## Command profiles
 
 `POST /v1/commands/raw` is the profile-aware command endpoint. In Default, TuxBridge rejects shell grammar and executes only simple commands whose executable appears in `security.default_command_allowlist`. The shipped allowlist is intentionally boring: `pwd`, `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `stat`, `du`, `df`, `uname`, `id`, and `whoami`.
@@ -90,7 +105,7 @@ Workspace tree summaries do not follow symlinks and enforce depth/entry caps. Gi
 
 ## ChatGPT Action
 
-`openapi.yaml` contains the Action schema, including profile-aware raw command execution. Replace its placeholder server URL with the HTTPS URL that fronts your TuxBridge instance, then configure the GPT Action to use Bearer API-key authentication with the same key supplied through `TUXBRIDGE_API_KEY`.
+`openapi.yaml` contains the main Action schema, including profile-aware raw command execution. `openapi-code-tools.yaml` contains the supplemental coding-tool operations. Replace the placeholder server URL with the HTTPS URL that fronts your TuxBridge instance and use the same Bearer API key.
 
 TuxBridge should normally listen only on loopback and sit behind a TLS reverse proxy. See `deploy/` for Caddy and systemd examples; `install.sh` generates the profile-appropriate service unit during normal installation.
 
