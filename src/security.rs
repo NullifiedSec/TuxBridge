@@ -1,6 +1,7 @@
+use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 
-use crate::error::ApiError;
+use crate::{error::ApiError, state::AppState};
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -17,6 +18,26 @@ impl SecurityProfile {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct SecurityProfileResponse {
+    profile: SecurityProfile,
+    unrestricted_shell: bool,
+    general_command_api: bool,
+    passwordless_sudo_expected: bool,
+    default_command_allowlist: Vec<String>,
+}
+
+pub async fn get_security_profile(State(state): State<AppState>) -> Json<SecurityProfileResponse> {
+    let profile = state.config.security.profile;
+    Json(SecurityProfileResponse {
+        profile,
+        unrestricted_shell: profile.allows_unrestricted_shell(),
+        general_command_api: profile.allows_unrestricted_shell(),
+        passwordless_sudo_expected: profile == SecurityProfile::IWantToNukeMyServer,
+        default_command_allowlist: state.config.security.default_command_allowlist.clone(),
+    })
+}
+
 pub fn validate_default_shell(command: &str, allowlist: &[String]) -> Result<Vec<String>, ApiError> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -26,8 +47,6 @@ pub fn validate_default_shell(command: &str, allowlist: &[String]) -> Result<Vec
         return Err(ApiError::BadRequest("command is too large".into()));
     }
 
-    // Default profile intentionally does not provide shell grammar. This blocks
-    // chaining, redirection, substitution, globbing tricks, and multiline scripts.
     const FORBIDDEN: [&str; 16] = [
         ";", "&&", "||", "|", ">", "<", "`", "$(", "${", "\n", "\r", "\\\n", "*", "?", "[", "]",
     ];
@@ -57,21 +76,21 @@ mod tests {
     use super::*;
 
     fn allowlist() -> Vec<String> {
-        vec!["git".into(), "ls".into()]
+        vec!["ls".into(), "cat".into()]
     }
 
     #[test]
     fn default_accepts_allowlisted_simple_command() {
         assert_eq!(
-            validate_default_shell("git status --short", &allowlist()).unwrap(),
-            vec!["git", "status", "--short"]
+            validate_default_shell("ls -la", &allowlist()).unwrap(),
+            vec!["ls", "-la"]
         );
     }
 
     #[test]
     fn default_rejects_shell_chaining() {
         assert!(validate_default_shell("ls; id", &allowlist()).is_err());
-        assert!(validate_default_shell("git status | cat", &allowlist()).is_err());
+        assert!(validate_default_shell("ls | cat", &allowlist()).is_err());
     }
 
     #[test]
