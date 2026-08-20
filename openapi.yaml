@@ -14,45 +14,65 @@ paths:
       operationId: getHealth
       security: []
       summary: Check whether TuxBridge is alive.
-      responses:
-        '200': { description: Service health. }
+      responses: { '200': { description: Service health. } }
   /v1/system:
     get:
       operationId: getSystemInfo
       summary: Inspect safe host metadata and development-tool availability.
-      responses:
-        '200': { description: System information. }
+      responses: { '200': { description: System information. } }
+  /v1/system/tool-versions:
+    get:
+      operationId: getToolVersions
+      summary: Probe bounded version output for common development tools.
+      responses: { '200': { description: Tool availability and versions. } }
+  /v1/system/processes:
+    get:
+      operationId: listProcesses
+      summary: List bounded process metadata without command lines or environment variables.
+      responses: { '200': { description: Process metadata. } }
+  /v1/system/listeners:
+    get:
+      operationId: listTcpListeners
+      summary: List TCP listening sockets without process command lines.
+      responses: { '200': { description: TCP listeners. } }
+  /v1/system/disks:
+    get:
+      operationId: getDiskUsage
+      summary: Inspect mounted filesystem capacity and free space.
+      responses: { '200': { description: Filesystem usage. } }
   /v1/doctor:
     get:
       operationId: runDoctor
-      summary: Diagnose tools, service-user safety, limits, workspaces, user-files mounts, and Git readiness.
-      responses:
-        '200': { description: Diagnostic report. }
+      summary: Diagnose tools, limits, service-user safety, workspaces, mounts, and Git readiness.
+      responses: { '200': { description: Diagnostic report. } }
   /v1/workspaces:
     get:
       operationId: listWorkspaces
       summary: List configured workspaces and capabilities.
-      responses:
-        '200': { description: Workspace summaries. }
+      responses: { '200': { description: Workspace summaries. } }
   /v1/workspaces/{name}:
     get:
       operationId: getWorkspace
       summary: Inspect one configured workspace.
       parameters:
         - { name: name, in: path, required: true, schema: { type: string } }
-      responses:
-        '200': { description: Workspace metadata. }
+      responses: { '200': { description: Workspace metadata. } }
   /v1/workspaces/resolve:
     post:
       operationId: resolveWorkspacePath
-      summary: Resolve an existing workspace-relative path after traversal and symlink-boundary checks.
+      summary: Safely resolve an existing workspace-relative path.
+      requestBody: { $ref: '#/components/requestBodies/PathRequestBody' }
+      responses: { '200': { description: Resolved path metadata. } }
+  /v1/workspaces/tree-summary:
+    post:
+      operationId: summarizeWorkspaceTree
+      summary: Count bounded files, directories, symlinks, and bytes without following symlinks.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PathRequest' }
-      responses:
-        '200': { description: Canonical path metadata. }
+            schema: { $ref: '#/components/schemas/TreeSummaryRequest' }
+      responses: { '200': { description: Tree summary. } }
   /v1/fs/list:
     post:
       operationId: listDirectory
@@ -62,7 +82,7 @@ paths:
   /v1/fs/stat:
     post:
       operationId: statPath
-      summary: Stat a path inside a readable workspace.
+      summary: Stat a readable workspace path.
       requestBody: { $ref: '#/components/requestBodies/PathRequestBody' }
       responses: { '200': { description: Path metadata. } }
   /v1/fs/read:
@@ -78,7 +98,7 @@ paths:
   /v1/fs/read-batch:
     post:
       operationId: readFiles
-      summary: Read multiple workspace files while preserving per-file partial success.
+      summary: Read multiple workspace files with per-file partial success.
       requestBody:
         required: true
         content:
@@ -88,7 +108,7 @@ paths:
   /v1/fs/search:
     post:
       operationId: searchFiles
-      summary: Recursively search readable UTF-8 workspace files without following symlinks.
+      summary: Search bounded UTF-8 workspace files without following symlinks.
       requestBody:
         required: true
         content:
@@ -112,11 +132,11 @@ paths:
             schema: { $ref: '#/components/schemas/WriteRequest' }
       responses:
         '200': { description: Mutation result. }
-        '409': { description: Target exists or expected hash is stale. }
+        '409': { description: Existing target or stale expected hash. }
   /v1/fs/patch:
     post:
       operationId: patchFile
-      summary: Hash-guardedly replace exactly one text occurrence in a workspace file.
+      summary: Hash-guardedly replace exactly one text occurrence.
       requestBody:
         required: true
         content:
@@ -128,18 +148,18 @@ paths:
   /v1/user-files:
     get:
       operationId: listUserFileMounts
-      summary: List separately configured user-files mounts and read/write capabilities.
-      responses: { '200': { description: User-files mount summaries. } }
+      summary: List separately configured user-files mounts.
+      responses: { '200': { description: Mount summaries. } }
   /v1/user-files/list:
     post:
       operationId: listUserDirectory
-      summary: List a directory inside a readable user-files mount.
+      summary: List a readable user-files directory.
       requestBody: { $ref: '#/components/requestBodies/UserPathRequestBody' }
       responses: { '200': { description: Directory entries. } }
   /v1/user-files/stat:
     post:
       operationId: statUserPath
-      summary: Stat a path inside a readable user-files mount.
+      summary: Stat a readable user-files path.
       requestBody: { $ref: '#/components/requestBodies/UserPathRequestBody' }
       responses: { '200': { description: Path metadata. } }
   /v1/user-files/read:
@@ -161,27 +181,23 @@ paths:
   /v1/user-files/write:
     post:
       operationId: writeUserFile
-      summary: Atomically create or hash-guardedly replace a UTF-8 file in a writable user-files mount.
+      summary: Atomically create or hash-guardedly replace a user file.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/UserWriteRequest' }
-      responses:
-        '200': { description: Mutation result. }
-        '409': { description: Target exists or expected hash is stale. }
+      responses: { '200': { description: Mutation result. } }
   /v1/user-files/patch:
     post:
       operationId: patchUserFile
-      summary: Hash-guardedly replace exactly one text occurrence in a writable user-files mount.
+      summary: Hash-guardedly patch exactly one occurrence in a user file.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/UserPatchRequest' }
-      responses:
-        '200': { description: Mutation result. }
-        '409': { description: Hash mismatch or ambiguous patch. }
+      responses: { '200': { description: Mutation result. } }
   /v1/project/inspect:
     post:
       operationId: inspectProject
@@ -192,7 +208,7 @@ paths:
     post:
       operationId: runCommand
       summary: Run one argv-based command in a command-enabled workspace.
-      description: No shell is invoked implicitly. The command inherits the TuxBridge service account's OS privileges.
+      description: No shell is invoked implicitly. The process inherits the TuxBridge service account privileges.
       requestBody:
         required: true
         content:
@@ -202,7 +218,7 @@ paths:
   /v1/commands/start:
     post:
       operationId: startCommand
-      summary: Start a bounded, cancellable background command job.
+      summary: Start a bounded cancellable background command.
       requestBody:
         required: true
         content:
@@ -221,19 +237,37 @@ paths:
       summary: Request cancellation of a running background command job.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
-      responses: { '200': { description: Job snapshot at cancellation request time. } }
+      responses: { '200': { description: Job snapshot. } }
   /v1/git/status:
     post:
       operationId: gitStatus
-      summary: Return structured branch and working-tree status.
+      summary: Return structured Git working-tree status.
       requestBody: { $ref: '#/components/requestBodies/WorkspaceRequestBody' }
-      responses: { '200': { description: Structured Git status. } }
+      responses: { '200': { description: Git status. } }
   /v1/git/branches:
     post:
       operationId: gitBranches
-      summary: List local Git branches, SHAs, upstreams, and current state.
+      summary: List local branches, SHAs, upstreams, and current state.
       requestBody: { $ref: '#/components/requestBodies/WorkspaceRequestBody' }
       responses: { '200': { description: Branches. } }
+  /v1/git/head:
+    post:
+      operationId: gitHead
+      summary: Inspect HEAD SHA, current branch, upstream, and repository root.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceRequestBody' }
+      responses: { '200': { description: HEAD metadata. } }
+  /v1/git/remotes:
+    post:
+      operationId: gitRemotes
+      summary: List Git remotes with fetch and push URLs.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceRequestBody' }
+      responses: { '200': { description: Git remotes. } }
+  /v1/git/stashes:
+    post:
+      operationId: gitStashes
+      summary: List stash references and subjects without mutating them.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceRequestBody' }
+      responses: { '200': { description: Stash entries. } }
   /v1/git/log:
     post:
       operationId: gitLog
@@ -247,7 +281,7 @@ paths:
   /v1/git/diff:
     post:
       operationId: gitDiff
-      summary: Read a bounded unstaged or staged Git diff.
+      summary: Read a bounded staged or unstaged diff.
       requestBody:
         required: true
         content:
@@ -263,11 +297,11 @@ paths:
   /v1/git/pull:
     post:
       operationId: gitPull
-      summary: Pull the current upstream only when the worktree is clean and a fast-forward is possible.
+      summary: Pull only when the worktree is clean and fast-forward is possible.
       requestBody: { $ref: '#/components/requestBodies/WorkspaceRequestBody' }
       responses:
         '200': { description: Git result. }
-        '409': { description: Worktree is dirty. }
+        '409': { description: Dirty worktree. }
   /v1/git/add:
     post:
       operationId: gitAdd
@@ -281,7 +315,7 @@ paths:
   /v1/git/commit:
     post:
       operationId: gitCommit
-      summary: Commit currently staged changes with an explicit message; Git hooks are disabled.
+      summary: Commit staged changes with an explicit message and disabled hooks.
       requestBody:
         required: true
         content:
@@ -291,7 +325,7 @@ paths:
   /v1/git/push:
     post:
       operationId: gitPush
-      summary: Non-force push one validated existing local branch to the same branch name on an existing remote.
+      summary: Non-force push one validated local branch to an existing remote.
       requestBody:
         required: true
         content:
@@ -345,6 +379,14 @@ components:
       properties:
         workspace: { type: string, minLength: 1 }
         path: { type: string, minLength: 1 }
+    TreeSummaryRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties:
+        workspace: { type: string, minLength: 1 }
+        max_depth: { type: integer, minimum: 0, maximum: 12, default: 4 }
+        max_entries: { type: integer, minimum: 1, maximum: 100000, default: 20000 }
     ReadSpec:
       type: object
       additionalProperties: false
@@ -393,7 +435,7 @@ components:
         path: { type: string, minLength: 1 }
         mode: { type: string, enum: [create, replace] }
         content: { type: string }
-        expected_sha256: { type: string, description: Required for replace mode. }
+        expected_sha256: { type: string, minLength: 64, maxLength: 64 }
     PatchRequest:
       type: object
       additionalProperties: false
@@ -428,7 +470,7 @@ components:
         path: { type: string, minLength: 1 }
         mode: { type: string, enum: [create, replace] }
         content: { type: string }
-        expected_sha256: { type: string, description: Required for replace mode. }
+        expected_sha256: { type: string, minLength: 64, maxLength: 64 }
     UserPatchRequest:
       type: object
       additionalProperties: false
