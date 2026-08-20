@@ -1,6 +1,10 @@
-use std::{collections::{BTreeMap, BTreeSet, HashMap}, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use axum::http::Method;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::config::AuthRole;
@@ -8,6 +12,19 @@ use crate::config::AuthRole;
 const MAX_PROFILE_OPERATIONS: usize = 30;
 const CANONICAL_OPENAPI: &str = include_str!("../openapi.yaml");
 const PROFILE_MANIFEST: &str = include_str!("../openapi-profiles.json");
+
+#[derive(Debug, Deserialize)]
+struct ProfileSpec {
+    operations: Vec<String>,
+    #[serde(default)]
+    support_routes: Vec<SupportRoute>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SupportRoute {
+    method: String,
+    path: String,
+}
 
 #[derive(Clone)]
 pub struct RolePolicy {
@@ -25,27 +42,37 @@ impl RolePolicy {
     pub fn embedded() -> Result<Self, String> {
         let canonical: Value = serde_json::from_str(CANONICAL_OPENAPI)
             .map_err(|error| format!("canonical openapi.yaml is not JSON-compatible: {error}"))?;
-        let profiles: BTreeMap<String, Vec<String>> = serde_json::from_str(PROFILE_MANIFEST)
+        let profiles: BTreeMap<String, ProfileSpec> = serde_json::from_str(PROFILE_MANIFEST)
             .map_err(|error| format!("openapi-profiles.json is invalid: {error}"))?;
         let operation_index = operation_index(&canonical)?;
         let mut route_roles: BTreeMap<(String, String), BTreeSet<AuthRole>> = BTreeMap::new();
 
-        for (profile, operation_ids) in profiles {
+        for (profile, spec) in profiles {
             let role = profile_role(&profile)?;
-            if operation_ids.is_empty() || operation_ids.len() > MAX_PROFILE_OPERATIONS {
+            if spec.operations.is_empty() || spec.operations.len() > MAX_PROFILE_OPERATIONS {
                 return Err(format!(
-                    "profile {profile:?} must contain 1..={MAX_PROFILE_OPERATIONS} operations, found {}",
-                    operation_ids.len()
+                    "profile {profile:?} must contain 1..={MAX_PROFILE_OPERATIONS} GPT operations, found {}",
+                    spec.operations.len()
                 ));
             }
             let mut seen = BTreeSet::new();
-            for operation_id in operation_ids {
+            for operation_id in spec.operations {
                 if !seen.insert(operation_id.clone()) {
                     return Err(format!("profile {profile:?} duplicates operationId {operation_id:?}"));
                 }
                 let (method, path) = operation_index.get(&operation_id)
                     .ok_or_else(|| format!("profile {profile:?} references missing operationId {operation_id:?}"))?;
                 route_roles.entry((method.clone(), path.clone())).or_default().insert(role);
+            }
+            for support in spec.support_routes {
+                let method = support.method.to_ascii_lowercase();
+                if !is_http_method(&method) {
+                    return Err(format!("profile {profile:?} has invalid support method {:?}", support.method));
+                }
+                if !support.path.starts_with("/v1/") || support.path.chars().any(char::is_whitespace) {
+                    return Err(format!("profile {profile:?} has invalid support path {:?}", support.path));
+                }
+                route_roles.entry((method, support.path)).or_default().insert(role);
             }
         }
 
@@ -125,6 +152,9 @@ mod tests {
         assert!(!policy.allows(AuthRole::Reviewer, &Method::POST, "/v1/git/commit"));
         assert!(policy.allows(AuthRole::Operator, &Method::DELETE, "/v1/jobs/job-1"));
         assert!(policy.allows(AuthRole::Operator, &Method::POST, "/v1/approvals/a-1/approve"));
+        assert!(policy.allows(AuthRole::Operator, &Method::GET, "/v1/events/stream"));
+        assert!(policy.allows(AuthRole::Operator, &Method::GET, "/v1/lsp/servers"));
+        assert!(policy.allows(AuthRole::Operator, &Method::POST, "/v1/git/diff"));
         assert!(!policy.allows(AuthRole::Operator, &Method::POST, "/v1/lsp/rename"));
         assert!(policy.allows(AuthRole::Admin, &Method::POST, "/anything"));
     }
