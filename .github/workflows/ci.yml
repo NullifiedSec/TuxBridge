@@ -9,6 +9,23 @@ permissions:
   contents: read
 
 jobs:
+  schemas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate GPT occupation schemas
+        run: python3 scripts/generate_openapi_profiles.py
+      - name: Upload generated schemas
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-openapi-profiles
+          path: |
+            openapi-dev.yaml
+            openapi-review.yaml
+            openapi-ops.yaml
+      - name: Verify generated schemas are committed
+        run: git diff --exit-code -- openapi-dev.yaml openapi-review.yaml openapi-ops.yaml
+
   rust:
     runs-on: ubuntu-latest
     steps:
