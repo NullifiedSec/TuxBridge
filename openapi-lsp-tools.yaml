@@ -1,0 +1,127 @@
+openapi: 3.1.0
+info:
+  title: TuxBridge Semantic Coding API
+  version: 0.1.0
+  description: Real Language Server Protocol operations backed by workspace-scoped language servers.
+servers:
+  - url: https://tuxbridge.example.com
+security:
+  - bearerAuth: []
+paths:
+  /v1/lsp/definition:
+    post:
+      operationId: goToDefinition
+      summary: Resolve a symbol definition using the workspace language server.
+      requestBody: { $ref: '#/components/requestBodies/PositionRequest' }
+      responses: { '200': { description: LSP definition result. } }
+  /v1/lsp/references:
+    post:
+      operationId: findSemanticReferences
+      summary: Find semantic references using the workspace language server.
+      requestBody: { $ref: '#/components/requestBodies/PositionRequest' }
+      responses: { '200': { description: LSP reference locations. } }
+  /v1/lsp/hover:
+    post:
+      operationId: getSemanticHover
+      summary: Get type/signature/documentation hover information.
+      requestBody: { $ref: '#/components/requestBodies/PositionRequest' }
+      responses: { '200': { description: LSP hover response. } }
+  /v1/lsp/document-symbols:
+    post:
+      operationId: getSemanticDocumentSymbols
+      summary: Get compiler/language-server document symbols.
+      requestBody: { $ref: '#/components/requestBodies/DocumentRequest' }
+      responses: { '200': { description: LSP document symbols. } }
+  /v1/lsp/workspace-symbols:
+    post:
+      operationId: searchSemanticWorkspaceSymbols
+      summary: Search symbols across an indexed workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace, query]
+              properties:
+                workspace: { type: string, minLength: 1 }
+                query: { type: string }
+      responses: { '200': { description: LSP workspace symbols. } }
+  /v1/lsp/diagnostics:
+    post:
+      operationId: getLanguageDiagnostics
+      summary: Open a document and collect language-server diagnostics.
+      requestBody: { $ref: '#/components/requestBodies/DocumentRequest' }
+      responses: { '200': { description: Diagnostics published for the document. } }
+  /v1/lsp/rename:
+    post:
+      operationId: renameSemanticSymbol
+      summary: Preview or safely apply a language-server semantic rename.
+      description: Workspace edits are restricted to existing in-workspace regular files, converted from UTF-16 accurately, preflighted before writes, and persisted atomically per file. Resource create/delete/rename operations are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace, path, line, column, new_name]
+              properties:
+                workspace: { type: string, minLength: 1 }
+                path: { type: string, minLength: 1 }
+                line: { type: integer, minimum: 1, description: 1-based source line. }
+                column: { type: integer, minimum: 1, description: 1-based Unicode-scalar column; TuxBridge converts to LSP UTF-16. }
+                new_name: { type: string, minLength: 1 }
+                dry_run: { type: boolean, default: true }
+      responses:
+        '200': { description: Per-file old/new hashes and application status. }
+        '409': { description: File changed after edit preflight. }
+  /v1/lsp/format:
+    post:
+      operationId: formatWithLanguageServer
+      summary: Preview or safely apply language-server document formatting.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace, path]
+              properties:
+                workspace: { type: string, minLength: 1 }
+                path: { type: string, minLength: 1 }
+                dry_run: { type: boolean, default: true }
+      responses:
+        '200': { description: Per-file old/new hashes and application status. }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  requestBodies:
+    PositionRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [workspace, path, line, column]
+            properties:
+              workspace: { type: string, minLength: 1 }
+              path: { type: string, minLength: 1 }
+              line: { type: integer, minimum: 1 }
+              column: { type: integer, minimum: 1 }
+    DocumentRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [workspace, path]
+            properties:
+              workspace: { type: string, minLength: 1 }
+              path: { type: string, minLength: 1 }
