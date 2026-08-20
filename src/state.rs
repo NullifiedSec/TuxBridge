@@ -9,10 +9,17 @@ use crate::{
     approvals::ApprovalStore,
     audit::AuditStore,
     command::JobStore,
-    config::{Config, ConfigError},
+    config::{AuthRole, Config, ConfigError},
     events::EventHub,
     sessions::SessionStore,
 };
+
+#[derive(Debug, Clone)]
+pub struct PrincipalCredential {
+    pub name: Arc<str>,
+    pub key: Arc<str>,
+    pub roles: Arc<[AuthRole]>,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -23,13 +30,21 @@ pub struct AppState {
     pub sessions: SessionStore,
     pub approvals: ApprovalStore,
     pub request_gate: Arc<Semaphore>,
+    pub principals: Arc<[PrincipalCredential]>,
     request_sequence: Arc<AtomicU64>,
-    api_key: Arc<str>,
 }
 
 impl AppState {
     pub fn new(config: Config) -> Result<Self, ConfigError> {
-        let api_key = config.api_key()?;
+        let principals = config
+            .auth_principals()?
+            .into_iter()
+            .map(|principal| PrincipalCredential {
+                name: Arc::from(principal.name),
+                key: Arc::from(principal.key),
+                roles: Arc::from(principal.roles),
+            })
+            .collect::<Vec<_>>();
         let jobs = JobStore::new(
             config.limits.max_jobs,
             config.limits.job_retention_seconds,
@@ -44,13 +59,9 @@ impl AppState {
             sessions: SessionStore::default(),
             approvals: ApprovalStore::default(),
             request_gate,
+            principals: Arc::from(principals),
             request_sequence: Arc::new(AtomicU64::new(0)),
-            api_key: Arc::from(api_key),
         })
-    }
-
-    pub fn api_key(&self) -> &str {
-        &self.api_key
     }
 
     pub fn next_request_id(&self) -> String {
