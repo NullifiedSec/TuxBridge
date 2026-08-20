@@ -1,0 +1,179 @@
+openapi: 3.1.0
+info:
+  title: TuxBridge Agent Development API
+  version: 0.1.0
+  description: High-value repository orientation, structural editing, verification, job and coding-session operations for AI development agents.
+servers:
+  - url: https://tuxbridge.example.com
+security:
+  - bearerAuth: []
+paths:
+  /v1/code/map:
+    post:
+      operationId: getRepositoryMap
+      summary: Get a compact bounded orientation map of a workspace.
+      requestBody: { $ref: '#/components/requestBodies/WorkspaceBody' }
+      responses: { '200': { description: Project kinds, manifests, language counts, roots, important files and Git changes. } }
+  /v1/code/structure:
+    post:
+      operationId: getSyntaxStructure
+      summary: Parse a source file with Tree-sitter and return exact named syntax-node ranges.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace, path]
+              properties:
+                workspace: { type: string, minLength: 1 }
+                path: { type: string, minLength: 1 }
+                kind: { type: string }
+                name: { type: string }
+                max_nodes: { type: integer, minimum: 1, maximum: 4000, default: 1000 }
+      responses: { '200': { description: Exact syntax nodes with byte and line ranges. } }
+  /v1/code/node-at:
+    post:
+      operationId: getSyntaxNodeAtPosition
+      summary: Resolve the smallest named Tree-sitter node at a 1-based source position.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace, path, line, column]
+              properties:
+                workspace: { type: string }
+                path: { type: string }
+                line: { type: integer, minimum: 1 }
+                column: { type: integer, minimum: 1 }
+      responses: { '200': { description: Exact syntax node. } }
+  /v1/code/replace-node:
+    post:
+      operationId: replaceSyntaxNode
+      summary: Preview or hash-guardedly replace an exact Tree-sitter syntax node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace, path, expected_sha256, start_byte, end_byte, new]
+              properties:
+                workspace: { type: string }
+                path: { type: string }
+                expected_sha256: { type: string }
+                start_byte: { type: integer, minimum: 0 }
+                end_byte: { type: integer, minimum: 1 }
+                expected_kind: { type: string }
+                new: { type: string }
+                dry_run: { type: boolean, default: true }
+      responses:
+        '200': { description: Preview or applied structural edit with hashes. }
+        '409': { description: Stale hash or stale syntax-node range. }
+  /v1/code/verification-plan:
+    post:
+      operationId: planCodeVerification
+      summary: Plan fast and full project verification based on project type and changed files.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace]
+              properties:
+                workspace: { type: string }
+                changed_paths: { type: array, items: { type: string }, default: [] }
+      responses: { '200': { description: Fast and full verification command recommendations. } }
+  /v1/code/sessions:
+    get:
+      operationId: listCodingSessions
+      summary: List bounded coding sessions and rollback safety state.
+      responses: { '200': { description: Coding sessions. } }
+    post:
+      operationId: createCodingSession
+      summary: Create a coding session for coherent change tracking and hash-safe rollback.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace]
+              properties:
+                workspace: { type: string }
+                title: { type: string }
+      responses: { '200': { description: New coding session. } }
+  /v1/code/sessions/{id}:
+    get:
+      operationId: getCodingSession
+      summary: Inspect one coding session.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Session state and tracked files. } }
+  /v1/code/sessions/{id}/checkpoint:
+    post:
+      operationId: checkpointCodingSessionFiles
+      summary: Snapshot original versions of files before the agent mutates them.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      requestBody: { $ref: '#/components/requestBodies/PathsBody' }
+      responses: { '200': { description: Updated session. } }
+  /v1/code/sessions/{id}/refresh:
+    post:
+      operationId: refreshCodingSessionHashes
+      summary: Record hashes written by the agent after editing checkpointed files.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      requestBody: { $ref: '#/components/requestBodies/PathsBody' }
+      responses: { '200': { description: Updated rollback-safe session hashes. } }
+  /v1/code/sessions/{id}/finalize:
+    post:
+      operationId: finalizeCodingSession
+      summary: Finalize a successful coding session.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Finalized session. } }
+  /v1/code/sessions/{id}/rollback:
+    post:
+      operationId: rollbackCodingSession
+      summary: Restore only session files whose current hashes still match what the agent wrote.
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200': { description: Restored paths. }
+        '409': { description: A tracked file changed after the agent wrote it; nothing is rolled back. }
+  /v1/jobs:
+    get:
+      operationId: listCommandJobs
+      summary: List background command jobs including structured diagnostics.
+      responses: { '200': { description: Job snapshots. } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  requestBodies:
+    WorkspaceBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [workspace]
+            properties: { workspace: { type: string, minLength: 1 } }
+    PathsBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [paths]
+            properties:
+              paths:
+                type: array
+                minItems: 1
+                maxItems: 128
+                items: { type: string, minLength: 1 }
