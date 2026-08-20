@@ -9,11 +9,13 @@ use axum::{
 use serde::Serialize;
 use tokio::net::TcpListener;
 
+mod audit;
 mod auth;
 mod bonus;
 mod code_tools;
 mod command;
 mod config;
+mod dashboard;
 mod doctor;
 mod error;
 mod fs;
@@ -62,6 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new(config)?;
 
     let protected = Router::new()
+        .route("/v1/dashboard", get(dashboard::dashboard_info))
+        .route("/v1/audit/events", get(audit::list_events))
         .route("/v1/system", get(system::system_info))
         .route("/v1/system/tool-versions", get(bonus::tool_versions))
         .route("/v1/system/processes", get(bonus::processes))
@@ -129,6 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/ui", get(dashboard::dashboard))
         .merge(protected)
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .layer(middleware::from_fn_with_state(
