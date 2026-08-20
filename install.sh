@@ -14,6 +14,7 @@ BINARY_SRC="${1:-./target/release/tuxbridge}"
 BINARY_DST="/usr/local/bin/tuxbridge"
 SERVICE_DST="/etc/systemd/system/tuxbridge.service"
 SUDOERS_DST="/etc/sudoers.d/tuxbridge"
+ENV_FILE="$CONFIG_DIR/tuxbridge.env"
 
 if [[ ! -x "$BINARY_SRC" ]]; then
   echo "Built binary not found or not executable: $BINARY_SRC" >&2
@@ -35,7 +36,7 @@ TuxBridge security profile
 
   3) I_want_to_nuke_my_server
      Same as Loose, plus passwordless sudo for the tuxbridge user.
-     Whoever controls the API key is effectively root. Yes, really.
+     Whoever controls an administrator/operator-capable key is effectively root.
 
 EOF
 
@@ -47,7 +48,7 @@ case "$choice" in
     profile="i_want_to_nuke_my_server"
     echo
     echo "WARNING: this grants tuxbridge passwordless sudo for ALL commands."
-    echo "Treat the TuxBridge API key as a root credential."
+    echo "Treat privileged TuxBridge API keys as root credentials."
     read -r -p "Type NUKE to continue: " confirm
     [[ "$confirm" == "NUKE" ]] || { echo "Cancelled."; exit 1; }
     ;;
@@ -77,13 +78,20 @@ install -d -o root -g "$USER_NAME" -m 0750 "$CONFIG_DIR"
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$STATE_DIR"
 install -o root -g root -m 0755 "$BINARY_SRC" "$BINARY_DST"
 
-# Preserve an existing API key on reinstall/profile switch; generate one only once.
-if [[ ! -s "$CONFIG_DIR/tuxbridge.env" ]]; then
-  api_key="$(openssl rand -hex 32)"
-  printf 'TUXBRIDGE_API_KEY=%s\n' "$api_key" > "$CONFIG_DIR/tuxbridge.env"
-fi
-chmod 0640 "$CONFIG_DIR/tuxbridge.env"
-chown root:"$USER_NAME" "$CONFIG_DIR/tuxbridge.env"
+# Preserve all existing credentials on reinstall and add any newly introduced role keys.
+touch "$ENV_FILE"
+ensure_key() {
+  local name="$1"
+  if ! grep -q "^${name}=" "$ENV_FILE"; then
+    printf '%s=%s\n' "$name" "$(openssl rand -hex 32)" >> "$ENV_FILE"
+  fi
+}
+ensure_key TUXBRIDGE_API_KEY
+ensure_key TUXBRIDGE_DEV_API_KEY
+ensure_key TUXBRIDGE_REVIEW_API_KEY
+ensure_key TUXBRIDGE_OPS_API_KEY
+chmod 0640 "$ENV_FILE"
+chown root:"$USER_NAME" "$ENV_FILE"
 
 if [[ "$profile" == "default" ]]; then
   git_write=false
@@ -98,7 +106,20 @@ cat > "$CONFIG_DIR/tuxbridge.toml" <<EOF
 listen = "127.0.0.1:8787"
 
 [auth]
+# Backwards-compatible administrator credential with unrestricted API access.
 api_key_env = "TUXBRIDGE_API_KEY"
+
+[auth.principals.eris_dev]
+api_key_env = "TUXBRIDGE_DEV_API_KEY"
+roles = ["developer"]
+
+[auth.principals.eris_review]
+api_key_env = "TUXBRIDGE_REVIEW_API_KEY"
+roles = ["reviewer"]
+
+[auth.principals.eris_ops]
+api_key_env = "TUXBRIDGE_OPS_API_KEY"
+roles = ["operator"]
 
 [security]
 profile = "$profile"
@@ -193,5 +214,9 @@ echo "Installed TuxBridge with profile: $profile"
 echo "Service user: $USER_NAME"
 echo "Home workspace: $HOME_DIR"
 echo "Config: $CONFIG_DIR/tuxbridge.toml"
-echo "API key file: $CONFIG_DIR/tuxbridge.env"
-echo "Retrieve the API key with: sudo cat $CONFIG_DIR/tuxbridge.env"
+echo "Credential file: $ENV_FILE"
+echo "Retrieve all GPT credentials with: sudo cat $ENV_FILE"
+echo "  TUXBRIDGE_DEV_API_KEY    -> openapi-dev.yaml"
+echo "  TUXBRIDGE_REVIEW_API_KEY -> openapi-review.yaml"
+echo "  TUXBRIDGE_OPS_API_KEY    -> openapi-ops.yaml"
+echo "  TUXBRIDGE_API_KEY        -> administrator / Mission Control fallback"
