@@ -13,6 +13,7 @@ mod config;
 mod error;
 mod fs;
 mod git;
+mod git_mutation;
 mod mutation;
 mod project;
 mod state;
@@ -70,6 +71,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/git/branches", post(git::git_branches))
         .route("/v1/git/log", post(git::git_log))
         .route("/v1/git/diff", post(git::git_diff))
+        .route("/v1/git/fetch", post(git_mutation::git_fetch))
+        .route("/v1/git/pull", post(git_mutation::git_pull))
+        .route("/v1/git/add", post(git_mutation::git_add))
+        .route("/v1/git/commit", post(git_mutation::git_commit))
+        .route("/v1/git/push", post(git_mutation::git_push))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,
