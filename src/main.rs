@@ -11,6 +11,7 @@ use tokio::net::TcpListener;
 
 mod auth;
 mod bonus;
+mod code_tools;
 mod command;
 mod config;
 mod doctor;
@@ -86,6 +87,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/user-files/write", post(user_files::write_file))
         .route("/v1/user-files/patch", post(user_files::patch_file))
         .route("/v1/project/inspect", post(project::inspect_project))
+        .route("/v1/code/context", post(code_tools::code_context))
+        .route("/v1/code/symbols", post(code_tools::code_symbols))
+        .route("/v1/code/references", post(code_tools::code_references))
+        .route("/v1/code/edit-plan", post(code_tools::code_edit_plan))
+        .route("/v1/code/tasks", post(code_tools::discover_code_tasks))
         .route("/v1/commands/run", post(command::run_command))
         .route("/v1/commands/raw", post(raw_command::run_raw_command))
         .route("/v1/commands/start", post(command::start_command))
