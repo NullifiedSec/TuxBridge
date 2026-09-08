@@ -11,8 +11,9 @@ TuxBridge's agent-facing API is session-first. A session is the durable unit of 
 - The canonical session reference is readable and stable: `<workspace>--<original-title-slug>--<short-id>`.
 - A unique short suffix may be used to resume a session, but every response returns the canonical full reference.
 - Session title may become editable later; changing display metadata must never change the session reference.
-- Task summary, plan, and todos are explicit session state. They are not reconstructed from audit/event logs.
+- Task summary, plan, and todos are explicit durable session state. They are not reconstructed from audit/event logs.
 - File rollback remains hash-guarded: TuxBridge refuses to overwrite a file that changed after the session last wrote it.
+- TuxBridge persistence lives in its own state directory, never inside a configured workspace.
 
 ## New-task flow
 
@@ -31,7 +32,9 @@ The ordering of summary and plan is intentional: summary captures what the user 
 
 A later GPT instance can call `chooseSession` with the canonical session reference or a unique short suffix. TuxBridge returns the current session package: workspace binding, task summary, plan, todos, baseline, touched files, current file hashes, and resume warnings.
 
-The resumed agent should reconcile the returned state with the repository before making new changes. A resume warning is evidence that external state moved; it is not an instruction to discard or overwrite that state.
+Session metadata and rollback snapshots survive daemon restarts. On startup TuxBridge reloads the original readable session references and then reconciles live repository state when a session is viewed. A resume warning is evidence that external state moved or required rollback state is missing; it is not an instruction to discard or overwrite that state.
+
+The resumed agent should reconcile the returned state with the repository before making new changes.
 
 ## Plan vs todo
 
@@ -51,15 +54,17 @@ Todo statuses are `pending`, `in_progress`, `done`, `blocked`, and `skipped`.
 
 Session creation records safe Git orientation metadata when the workspace allows Git reads: branch, HEAD, and the Git porcelain changes that already existed when the session began. This lets the control plane distinguish session work from pre-existing state and warn a resumed agent when repository HEAD moved.
 
-The existing code-edit session integration still records before/after file hashes and rollback snapshots. The new readable session reference is also the identifier used by those mechanisms.
+The existing code-edit session integration records before/after file hashes and rollback snapshots. The readable session reference is also the identifier used by those mechanisms. Snapshot bytes are persisted separately from session metadata so historical sessions do not require loading their rollback contents into daemon memory.
+
+See `PERSISTENCE.md` for the on-disk format, atomicity rules, and state-directory resolution.
 
 ## Current migration state
 
-This protocol is being introduced alongside the legacy workspace-oriented API so existing clients keep working while agent tools migrate to session-bound wrappers.
+Session bootstrap, explicit task memory, todos, readable continuity references, and session persistence are implemented alongside the legacy workspace-oriented API so existing clients keep working while agent tools migrate to session-bound wrappers.
 
-The first milestone implements session bootstrap and explicit task memory. Low-level filesystem, code, command, LSP, and Git endpoints still accept workspace arguments directly; those are internal/legacy surfaces until corresponding compact agent tools are added.
+Low-level filesystem, code, command, LSP, and Git endpoints still accept workspace arguments directly; those are internal/legacy surfaces until corresponding compact agent tools are added.
 
-Session metadata is currently process-memory state. Persistence across daemon restarts is intentionally a follow-up milestone because the control-plane model also needs durable operations, approvals, and event history; those should share one coherent state store instead of persisting only part of the session model in an ad-hoc format.
+Operations, approvals, jobs, and event history are not yet durable session children. They are the next control-plane layers to bind to the durable session spine.
 
 ## API docs
 
