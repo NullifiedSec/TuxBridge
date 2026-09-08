@@ -40,25 +40,24 @@ impl SessionStore {
             }
         };
         let now = now_ms();
-        sessions.insert(
-            id.clone(),
-            SessionRecord {
-                id: id.clone(),
-                workspace: workspace.into(),
-                title,
-                summary: None,
-                plan: None,
-                result_summary: None,
-                created_at_unix_ms: now,
-                updated_at_unix_ms: now,
-                status: SessionStatus::Active,
-                baseline,
-                todos: Vec::new(),
-                next_todo: 0,
-                files: BTreeMap::new(),
-                bytes: 0,
-            },
-        );
+        let record = SessionRecord {
+            id: id.clone(),
+            workspace: workspace.into(),
+            title,
+            summary: None,
+            plan: None,
+            result_summary: None,
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+            status: SessionStatus::Active,
+            baseline,
+            todos: Vec::new(),
+            next_todo: 0,
+            files: BTreeMap::new(),
+            bytes: 0,
+        };
+        self.persistence.save_session(&record)?;
+        sessions.insert(id.clone(), record);
         Ok(id)
     }
 
@@ -76,9 +75,15 @@ impl SessionStore {
             .get_mut(&key)
             .ok_or_else(|| ApiError::NotFound(format!("coding session {id:?} not found")))?;
         validate_session(session, workspace)?;
+        let previous = session.clone();
+
         if let Some(existing) = session.files.get_mut(relative_path) {
             existing.after_sha256 = digest(after);
             session.updated_at_unix_ms = now_ms();
+            if let Err(error) = self.persistence.save_session(session) {
+                *session = previous;
+                return Err(error);
+            }
             return Ok(());
         }
         if session.files.len() >= MAX_FILES_PER_SESSION {
@@ -91,16 +96,24 @@ impl SessionStore {
                 "session rollback snapshot budget exceeded".into(),
             ));
         }
+
+        let before_sha256 = digest(before);
+        self.persistence
+            .write_snapshot(&session.id, &before_sha256, before)?;
         session.bytes += before.len();
         session.files.insert(
             relative_path.into(),
             FileSnapshot {
-                before: before.to_vec(),
-                before_sha256: digest(before),
+                before_sha256,
                 after_sha256: digest(after),
+                before_bytes: before.len(),
             },
         );
         session.updated_at_unix_ms = now_ms();
+        if let Err(error) = self.persistence.save_session(session) {
+            *session = previous;
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -145,6 +158,7 @@ impl SessionStore {
             .get_mut(&key)
             .ok_or_else(|| ApiError::NotFound(format!("coding session {id:?} not found")))?;
         validate_session(session, workspace)?;
+        let previous = session.clone();
         for relative in paths {
             let snapshot = session.files.get_mut(relative).ok_or_else(|| {
                 ApiError::Conflict(format!(
@@ -155,6 +169,10 @@ impl SessionStore {
             snapshot.after_sha256 = digest(&fs::read(path).map_err(map_io)?);
         }
         session.updated_at_unix_ms = now_ms();
+        if let Err(error) = self.persistence.save_session(session) {
+            *session = previous;
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -185,8 +203,13 @@ impl SessionStore {
             .get_mut(&key)
             .ok_or_else(|| ApiError::NotFound(format!("coding session {reference:?} not found")))?;
         ensure_active(session)?;
+        let previous = session.clone();
         session.summary = Some(summary);
         session.updated_at_unix_ms = now_ms();
+        if let Err(error) = self.persistence.save_session(session) {
+            *session = previous;
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -198,8 +221,13 @@ impl SessionStore {
             .get_mut(&key)
             .ok_or_else(|| ApiError::NotFound(format!("coding session {reference:?} not found")))?;
         ensure_active(session)?;
+        let previous = session.clone();
         session.plan = Some(plan);
         session.updated_at_unix_ms = now_ms();
+        if let Err(error) = self.persistence.save_session(session) {
+            *session = previous;
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -217,10 +245,40 @@ impl SessionStore {
             .get_mut(&key)
             .ok_or_else(|| ApiError::NotFound(format!("coding session {reference:?} not found")))?;
         ensure_active(session)?;
+        let previous = session.clone();
         session.result_summary = result_summary;
         session.status = SessionStatus::Finalized;
         session.updated_at_unix_ms = now_ms();
+        if let Err(error) = self.persistence.save_session(session) {
+            *session = previous;
+            return Err(error);
+        }
         Ok(())
+    }
+
+    pub(super) async fn mark_rolled_back(&self, reference: &str) -> Result<(), ApiError> {
+        let mut sessions = self.inner.lock().await;
+        let key = resolve_key(&sessions, reference)?;
+        let session = sessions
+            .get_mut(&key)
+            .ok_or_else(|| ApiError::NotFound(format!("coding session {reference:?} not found")))?;
+        ensure_active(session)?;
+        let previous = session.clone();
+        session.status = SessionStatus::RolledBack;
+        session.updated_at_unix_ms = now_ms();
+        if let Err(error) = self.persistence.save_session(session) {
+            *session = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(super) fn read_snapshot(&self, session: &str, sha256: &str) -> Result<Vec<u8>, ApiError> {
+        self.persistence.read_snapshot(session, sha256)
+    }
+
+    pub(super) fn snapshot_available(&self, session: &str, sha256: &str) -> bool {
+        self.persistence.snapshot_available(session, sha256)
     }
 
     pub(super) async fn todos(&self, request: TodoRequest) -> Result<TodoResponse, ApiError> {
@@ -236,6 +294,8 @@ impl SessionStore {
         let session = sessions.get_mut(&key).ok_or_else(|| {
             ApiError::NotFound(format!("coding session {reference:?} not found"))
         })?;
+        let previous = session.clone();
+        let mut changed = false;
 
         match request {
             TodoRequest::List { .. } => {}
@@ -254,6 +314,7 @@ impl SessionStore {
                     status: status.unwrap_or(TodoStatus::Pending),
                 });
                 session.updated_at_unix_ms = now_ms();
+                changed = true;
             }
             TodoRequest::Update {
                 id, text, status, ..
@@ -277,6 +338,7 @@ impl SessionStore {
                     item.status = status;
                 }
                 session.updated_at_unix_ms = now_ms();
+                changed = true;
             }
             TodoRequest::Remove { id, .. } => {
                 ensure_active(session)?;
@@ -288,6 +350,7 @@ impl SessionStore {
                     )));
                 }
                 session.updated_at_unix_ms = now_ms();
+                changed = true;
             }
             TodoRequest::Reorder { ids, .. } => {
                 ensure_active(session)?;
@@ -314,6 +377,14 @@ impl SessionStore {
                     .todos
                     .sort_by_key(|item| positions.get(&item.id).copied().unwrap_or(usize::MAX));
                 session.updated_at_unix_ms = now_ms();
+                changed = true;
+            }
+        }
+
+        if changed {
+            if let Err(error) = self.persistence.save_session(session) {
+                *session = previous;
+                return Err(error);
             }
         }
 
@@ -321,5 +392,60 @@ impl SessionStore {
             session: session.id.clone(),
             todos: session.todos.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_state_survives_store_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::open(directory.path()).unwrap();
+        let session = store
+            .create("demo", "Persist agent work".into(), None)
+            .await
+            .unwrap();
+        store
+            .set_summary(&session, "Fix the persistent session flow".into())
+            .await
+            .unwrap();
+        store
+            .set_plan(&session, "Inspect, edit, verify, review diff".into())
+            .await
+            .unwrap();
+        store
+            .todos(TodoRequest::Add {
+                session: session.clone(),
+                text: "Implement persistence".into(),
+                status: Some(TodoStatus::InProgress),
+            })
+            .await
+            .unwrap();
+        store
+            .capture_change(&session, "demo", "src/lib.rs", b"before", b"after")
+            .await
+            .unwrap();
+        drop(store);
+
+        let reopened = SessionStore::open(directory.path()).unwrap();
+        assert_eq!(reopened.workspace_for(&session).await.unwrap(), "demo");
+        let sessions = reopened.inner.lock().await;
+        let record = sessions.get(&session).unwrap();
+        assert_eq!(record.summary.as_deref(), Some("Fix the persistent session flow"));
+        assert_eq!(
+            record.plan.as_deref(),
+            Some("Inspect, edit, verify, review diff")
+        );
+        assert_eq!(record.todos.len(), 1);
+        assert_eq!(record.todos[0].status, TodoStatus::InProgress);
+        let snapshot = record.files.get("src/lib.rs").unwrap();
+        let snapshot_sha = snapshot.before_sha256.clone();
+        drop(sessions);
+        assert_eq!(
+            reopened.read_snapshot(&session, &snapshot_sha).unwrap(),
+            b"before"
+        );
     }
 }
