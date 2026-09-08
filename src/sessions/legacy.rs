@@ -9,7 +9,7 @@ use crate::{error::ApiError, state::AppState};
 
 use super::*;
 use super::support::{
-    atomic_write, digest, git_snapshot, map_io, now_ms, resolve_key, safe_existing, validate_text,
+    atomic_write, digest, git_snapshot, map_io, resolve_key, safe_existing, validate_text,
 };
 
 pub async fn create_session(
@@ -166,7 +166,11 @@ pub async fn rollback(
                 .files
                 .iter()
                 .map(|(path, file)| {
-                    (path.clone(), file.before.clone(), file.after_sha256.clone())
+                    (
+                        path.clone(),
+                        file.before_sha256.clone(),
+                        file.after_sha256.clone(),
+                    )
                 })
                 .collect::<Vec<_>>(),
         )
@@ -184,13 +188,14 @@ pub async fn rollback(
     let root = fs::canonicalize(&workspace_config.root).map_err(map_io)?;
     let mut prepared = Vec::new();
     let mut skipped = Vec::new();
-    for (relative, before, after_sha) in snapshots {
+    for (relative, before_sha, after_sha) in snapshots {
         let path = safe_existing(&root, &relative)?;
         let current = fs::read(&path).map_err(map_io)?;
         if digest(&current) != after_sha {
             skipped.push(relative);
             continue;
         }
+        let before = state.sessions.read_snapshot(&key, &before_sha)?;
         let permissions = fs::metadata(&path).map_err(map_io)?.permissions();
         prepared.push((relative, path, before, permissions));
     }
@@ -206,13 +211,7 @@ pub async fn rollback(
         atomic_write(&path, &before, permissions)?;
         restored.push(relative);
     }
-    {
-        let mut sessions = state.sessions.inner.lock().await;
-        if let Some(session) = sessions.get_mut(&key) {
-            session.status = SessionStatus::RolledBack;
-            session.updated_at_unix_ms = now_ms();
-        }
-    }
+    state.sessions.mark_rolled_back(&key).await?;
     state
         .events
         .emit(
