@@ -1,0 +1,388 @@
+openapi: 3.1.0
+info:
+  title: TuxBridge Agent Session API
+  version: 0.2.0-alpha
+  description: >-
+    Session-first agent control surface. A GPT discovers a workspace, selects it to
+    create a readable session reference, records task summary/plan/todos, and uses
+    that session reference for all subsequent agent operations.
+servers:
+  - url: https://tuxbridge.example.com
+    description: Replace with the HTTPS endpoint fronting TuxBridge.
+security:
+  - bearerAuth: []
+tags:
+  - name: Session bootstrap
+  - name: Session memory
+paths:
+  /v1/agent/workspaces/find:
+    post:
+      tags: [Session bootstrap]
+      operationId: findWorkspaces
+      summary: Find candidate workspaces before starting a session.
+      description: >-
+        Use this as the first TuxBridge call for a new task. Query is optional; an
+        empty query returns every configured workspace with capabilities and safe
+        Git orientation metadata when Git reads are enabled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FindWorkspacesRequest'
+      responses:
+        '200':
+          description: Candidate workspaces.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FindWorkspacesResponse'
+  /v1/agent/sessions/select:
+    post:
+      tags: [Session bootstrap]
+      operationId: selectWorkspace
+      summary: Select a workspace and start a readable agent session.
+      description: >-
+        Creates the session that all following agent operations belong to. The
+        returned session value is a stable, human/agent-readable reference such as
+        tuxbridge--build-control-panel--m4k8p. Keep it and send it on future calls.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelectWorkspaceRequest'
+      responses:
+        '200':
+          description: Newly created session and resume context.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '404':
+          description: Workspace is not configured or its root is unavailable.
+  /v1/agent/sessions/choose:
+    post:
+      tags: [Session bootstrap]
+      operationId: chooseSession
+      summary: Resume an existing session by full reference or unique short suffix.
+      description: >-
+        Use this when a new GPT instance must continue work started by another
+        instance. The response includes the durable task context currently held by
+        the daemon, current file hashes, todos, baseline, and resume warnings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChooseSessionRequest'
+      responses:
+        '200':
+          description: Session resume package.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '409':
+          description: The supplied short suffix matches multiple sessions.
+  /v1/agent/sessions/summary:
+    post:
+      tags: [Session memory]
+      operationId: setSummary
+      summary: Save the current task interpretation for a session.
+      description: >-
+        Call shortly after starting a session and update it when the requested
+        outcome materially changes. This is task memory, not an activity log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSummaryRequest'
+      responses:
+        '200':
+          description: Updated session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+  /v1/agent/sessions/plan:
+    post:
+      tags: [Session memory]
+      operationId: setPlan
+      summary: Save or replace the implementation plan after repository investigation.
+      description: >-
+        Prefer setting the plan after enough reading/searching to understand the
+        implementation. The plan is free-form Markdown so a resumed agent can pick
+        up the reasoning without reconstructing it from logs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPlanRequest'
+      responses:
+        '200':
+          description: Updated session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+  /v1/agent/sessions/todo:
+    post:
+      tags: [Session memory]
+      operationId: todo
+      summary: Read or mutate the session todo list.
+      description: >-
+        One cohesive todo tool supports list, add, update, remove, and reorder. Todos
+        represent execution state; the plan remains the higher-level strategy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TodoRequest'
+      responses:
+        '200':
+          description: Current todo state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TodoResponse'
+  /v1/agent/sessions/complete:
+    post:
+      tags: [Session memory]
+      operationId: completeSession
+      summary: Finalize a session with an optional result summary.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteSessionRequest'
+      responses:
+        '200':
+          description: Finalized session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    FindWorkspacesRequest:
+      type: object
+      properties:
+        query:
+          type: [string, 'null']
+          description: Optional case-insensitive workspace/path substring.
+    Workspace:
+      type: object
+      required: [id, name, root, exists, capabilities]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        root: { type: string }
+        exists: { type: boolean }
+        capabilities:
+          type: object
+          additionalProperties: { type: boolean }
+        git:
+          anyOf:
+            - $ref: '#/components/schemas/GitBaseline'
+            - type: 'null'
+    FindWorkspacesResponse:
+      type: object
+      required: [workspaces]
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/Workspace'
+    SelectWorkspaceRequest:
+      type: object
+      required: [workspace, session_title]
+      properties:
+        workspace:
+          type: string
+          description: Exact workspace id returned by findWorkspaces.
+        session_title:
+          type: string
+          maxLength: 160
+          description: Concise human-readable task title used in the immutable session ref.
+    ChooseSessionRequest:
+      type: object
+      required: [session]
+      properties:
+        session:
+          type: string
+          description: Full session reference or a unique short suffix such as m4k8p.
+    SetSummaryRequest:
+      type: object
+      required: [session, summary]
+      properties:
+        session: { type: string }
+        summary:
+          type: string
+          description: Durable summary of the user's requested outcome.
+    SetPlanRequest:
+      type: object
+      required: [session, plan]
+      properties:
+        session: { type: string }
+        plan:
+          type: string
+          description: Durable free-form Markdown implementation plan.
+    CompleteSessionRequest:
+      type: object
+      required: [session]
+      properties:
+        session: { type: string }
+        result_summary:
+          type: [string, 'null']
+    TodoStatus:
+      type: string
+      enum: [pending, in_progress, done, blocked, skipped]
+    TodoRequest:
+      oneOf:
+        - type: object
+          required: [action, session]
+          properties:
+            action: { const: list }
+            session: { type: string }
+        - type: object
+          required: [action, session, text]
+          properties:
+            action: { const: add }
+            session: { type: string }
+            text: { type: string }
+            status:
+              anyOf:
+                - $ref: '#/components/schemas/TodoStatus'
+                - type: 'null'
+        - type: object
+          required: [action, session, id]
+          properties:
+            action: { const: update }
+            session: { type: string }
+            id: { type: string }
+            text:
+              type: [string, 'null']
+            status:
+              anyOf:
+                - $ref: '#/components/schemas/TodoStatus'
+                - type: 'null'
+        - type: object
+          required: [action, session, id]
+          properties:
+            action: { const: remove }
+            session: { type: string }
+            id: { type: string }
+        - type: object
+          required: [action, session, ids]
+          properties:
+            action: { const: reorder }
+            session: { type: string }
+            ids:
+              type: array
+              items: { type: string }
+    TodoItem:
+      type: object
+      required: [id, text, status]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        status:
+          $ref: '#/components/schemas/TodoStatus'
+    TodoResponse:
+      type: object
+      required: [session, todos]
+      properties:
+        session: { type: string }
+        todos:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodoItem'
+    GitBaselineChange:
+      type: object
+      required: [index, worktree, path]
+      properties:
+        index: { type: string, minLength: 1, maxLength: 1 }
+        worktree: { type: string, minLength: 1, maxLength: 1 }
+        path: { type: string }
+    GitBaseline:
+      type: object
+      required: [changes]
+      properties:
+        branch:
+          type: [string, 'null']
+        head:
+          type: [string, 'null']
+        dirty:
+          type: [boolean, 'null']
+        changes:
+          type: array
+          description: Git porcelain changes that already existed when the session began.
+          items:
+            $ref: '#/components/schemas/GitBaselineChange'
+    SessionFile:
+      type: object
+      required: [path, before_sha256, after_sha256, rollback_safe]
+      properties:
+        path: { type: string }
+        before_sha256: { type: string }
+        after_sha256: { type: string }
+        current_sha256:
+          type: [string, 'null']
+        rollback_safe: { type: boolean }
+    Session:
+      type: object
+      required:
+        - id
+        - session
+        - workspace
+        - title
+        - created_at_unix_ms
+        - updated_at_unix_ms
+        - status
+        - todos
+        - files
+        - resume_warnings
+      properties:
+        id:
+          type: string
+          description: Backwards-compatible alias of session.
+        session:
+          type: string
+          description: Canonical readable session reference. Repeat it on every future agent call.
+        workspace: { type: string }
+        title: { type: string }
+        summary:
+          type: [string, 'null']
+        plan:
+          type: [string, 'null']
+        result_summary:
+          type: [string, 'null']
+        created_at_unix_ms: { type: integer }
+        updated_at_unix_ms: { type: integer }
+        status:
+          type: string
+          enum: [active, finalized, rolled_back]
+        baseline:
+          anyOf:
+            - $ref: '#/components/schemas/GitBaseline'
+            - type: 'null'
+        todos:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodoItem'
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionFile'
+        resume_warnings:
+          type: array
+          items: { type: string }
