@@ -20,7 +20,7 @@ pub async fn find_workspaces(
         .workspaces
         .iter()
         .filter(|(name, workspace)| {
-            query.as_ref().map_or(true, |query| {
+            query.as_ref().is_none_or(|query| {
                 name.to_ascii_lowercase().contains(query)
                     || workspace
                         .root
