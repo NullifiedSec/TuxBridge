@@ -45,7 +45,11 @@ pub(super) fn view_record(state: &AppState, session: &SessionRecord) -> SessionV
                 .and_then(|root| safe_existing(root, path).ok())
                 .and_then(|path| fs::read(path).ok())
                 .map(|bytes| digest(&bytes));
-            let rollback_safe = current_sha256.as_deref() == Some(file.after_sha256.as_str());
+            let snapshot_available = state
+                .sessions
+                .snapshot_available(&session.id, &file.before_sha256);
+            let rollback_safe = snapshot_available
+                && current_sha256.as_deref() == Some(file.after_sha256.as_str());
             SessionFileView {
                 path: path.clone(),
                 before_sha256: file.before_sha256.clone(),
@@ -56,11 +60,25 @@ pub(super) fn view_record(state: &AppState, session: &SessionRecord) -> SessionV
         })
         .collect::<Vec<_>>();
 
-    let mut resume_warnings = files
-        .iter()
-        .filter(|file| !file.rollback_safe)
-        .map(|file| format!("{} changed after this session last wrote it", file.path))
-        .collect::<Vec<_>>();
+    let mut resume_warnings = Vec::new();
+    for (path, file) in &session.files {
+        let snapshot_available = state
+            .sessions
+            .snapshot_available(&session.id, &file.before_sha256);
+        if !snapshot_available {
+            resume_warnings.push(format!(
+                "rollback snapshot for {path} is missing from TuxBridge state"
+            ));
+        } else if files
+            .iter()
+            .find(|view| view.path == *path)
+            .is_some_and(|view| !view.rollback_safe)
+        {
+            resume_warnings.push(format!(
+                "{path} changed after this session last wrote it"
+            ));
+        }
+    }
     if let (Some(baseline), Some(root)) = (&session.baseline, root.as_ref()) {
         if let Some(current) = git_snapshot(root) {
             if baseline.head.is_some() && current.head != baseline.head {
@@ -296,8 +314,8 @@ pub(super) fn map_io(error: std::io::Error) -> ApiError {
 mod tests {
     use std::collections::{BTreeMap, HashMap};
 
-    use super::*;
     use super::super::{SessionRecord, SessionStatus};
+    use super::*;
 
     #[test]
     fn session_refs_are_readable_and_bounded() {
@@ -306,7 +324,9 @@ mod tests {
             "Fix notification localization without touching Firebase config",
             7,
         );
-        assert!(reference.starts_with("damasquino-loyalty-app--fix-notification-localization-without-touching-f--"));
+        assert!(reference.starts_with(
+            "damasquino-loyalty-app--fix-notification-localization-without-touching-f--"
+        ));
         assert_eq!(reference.rsplit("--").next().unwrap().len(), 5);
     }
 
