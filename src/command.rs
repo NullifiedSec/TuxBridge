@@ -12,7 +12,7 @@ impl JobStore { pub fn new(max_jobs:usize,retention_seconds:u64)->Self{Self{jobs
 struct JobRecord { snapshot:JobSnapshot, cancel:Option<oneshot::Sender<()>> }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct CommandRequest { workspace:String, argv:Vec<String>, timeout_seconds:Option<u64> }
+pub struct CommandRequest { pub(crate) workspace:String, pub(crate) argv:Vec<String>, pub(crate) timeout_seconds:Option<u64> }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CommandResult {

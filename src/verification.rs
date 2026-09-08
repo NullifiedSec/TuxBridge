@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{error::ApiError, state::AppState};
 
 #[derive(Debug, Deserialize)]
-pub struct VerificationRequest { workspace:String, #[serde(default)] changed_paths:Vec<String> }
+pub struct VerificationRequest { pub(crate) workspace:String, #[serde(default)] pub(crate) changed_paths:Vec<String> }
 #[derive(Debug, Serialize)]
 pub struct VerificationPlan { workspace:String, changed_paths:Vec<String>, fast:Vec<VerificationTask>, full:Vec<VerificationTask> }
 #[derive(Debug, Serialize)]

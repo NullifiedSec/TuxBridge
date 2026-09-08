@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: TuxBridge Agent Session API
-  version: 0.2.0-alpha
+  version: 0.3.0-alpha
   description: >-
     Session-first agent control surface. A GPT discovers a workspace, selects it to
     create a readable session reference, records task summary/plan/todos, and uses
@@ -14,6 +14,7 @@ security:
 tags:
   - name: Session bootstrap
   - name: Session memory
+  - name: Agent tools
 paths:
   /v1/agent/workspaces/find:
     post:
@@ -167,12 +168,319 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Session'
+  /v1/agent/files/browse:
+    post:
+      tags: [Agent tools]
+      operationId: browseFiles
+      summary: List one directory inside the session workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BrowseFilesRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/code/read:
+    post:
+      tags: [Agent tools]
+      operationId: readCode
+      summary: Read focused code context from the session workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReadCodeRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/code/search:
+    post:
+      tags: [Agent tools]
+      operationId: searchCode
+      summary: Search text recursively inside the session workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SearchCodeRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/code/inspect:
+    post:
+      tags: [Agent tools]
+      operationId: inspectCode
+      summary: Inspect symbols in one source file.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InspectCodeRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/code/edit:
+    post:
+      tags: [Agent tools]
+      operationId: editCode
+      summary: Apply hash-guarded multi-file source edits in the active session.
+      description: >-
+        The workspace and rollback session are resolved server-side from session.
+        Use dry_run=true to preview. Real edits automatically capture rollback state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EditCodeRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/code/verification-plan:
+    post:
+      tags: [Agent tools]
+      operationId: planVerification
+      summary: Plan appropriate verification commands for the changed files.
+      description: Returns commands; execute selected checks with runCommand.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlanVerificationRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/commands/run:
+    post:
+      tags: [Agent tools]
+      operationId: runCommand
+      summary: Run a command in the session workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunCommandRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/git/status:
+    post:
+      tags: [Agent tools]
+      operationId: gitStatus
+      summary: Read Git status for the session workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionOnlyRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/git/diff:
+    post:
+      tags: [Agent tools]
+      operationId: gitDiff
+      summary: Read staged or unstaged Git diff for the session workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitDiffRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/git/stage:
+    post:
+      tags: [Agent tools]
+      operationId: gitStage
+      summary: Stage selected repository paths.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitStageRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/git/commit:
+    post:
+      tags: [Agent tools]
+      operationId: gitCommit
+      summary: Commit the currently staged changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitCommitRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+  /v1/agent/git/sync:
+    post:
+      tags: [Agent tools]
+      operationId: gitSync
+      summary: Fetch, fast-forward pull, or push for the session workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitSyncRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AgentToolResponse' }
+
 components:
+  responses:
+    AgentToolResponse:
+      description: Session-bound tool result. The canonical session reference is echoed on every success.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [session, result]
+            properties:
+              session: { type: string }
+              result: {}
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    BrowseFilesRequest:
+      type: object
+      required: [session]
+      properties:
+        session: { type: string }
+        path: { type: string, default: '' }
+    ReadCodeRequest:
+      type: object
+      required: [session, path]
+      properties:
+        session: { type: string }
+        path: { type: string }
+        start_line: { type: [integer, 'null'], minimum: 1 }
+        end_line: { type: [integer, 'null'], minimum: 1 }
+        context_before: { type: [integer, 'null'], minimum: 0 }
+        context_after: { type: [integer, 'null'], minimum: 0 }
+        max_bytes: { type: [integer, 'null'], minimum: 1 }
+    SearchCodeRequest:
+      type: object
+      required: [session, query]
+      properties:
+        session: { type: string }
+        path: { type: string, default: '' }
+        query: { type: string, minLength: 1 }
+        max_results: { type: [integer, 'null'], minimum: 1 }
+    InspectCodeRequest:
+      type: object
+      required: [session, path]
+      properties:
+        session: { type: string }
+        path: { type: string }
+    EditCodeRequest:
+      type: object
+      required: [session, files]
+      properties:
+        session: { type: string }
+        dry_run: { type: boolean, default: false }
+        files:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/FileEditPlan' }
+    FileEditPlan:
+      type: object
+      required: [path, expected_sha256, edits]
+      properties:
+        path: { type: string }
+        expected_sha256: { type: string }
+        edits:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/CodeEdit' }
+    CodeEdit:
+      oneOf:
+        - type: object
+          required: [kind, old, new]
+          properties:
+            kind: { const: replace_exact }
+            old: { type: string }
+            new: { type: string }
+        - type: object
+          required: [kind, start_line, end_line, new]
+          properties:
+            kind: { const: replace_lines }
+            start_line: { type: integer, minimum: 1 }
+            end_line: { type: integer, minimum: 1 }
+            new: { type: string }
+        - type: object
+          required: [kind, line, new]
+          properties:
+            kind: { const: insert_before }
+            line: { type: integer, minimum: 1 }
+            new: { type: string }
+        - type: object
+          required: [kind, line, new]
+          properties:
+            kind: { const: insert_after }
+            line: { type: integer, minimum: 1 }
+            new: { type: string }
+    PlanVerificationRequest:
+      type: object
+      required: [session]
+      properties:
+        session: { type: string }
+        changed_paths:
+          type: array
+          items: { type: string }
+    RunCommandRequest:
+      type: object
+      required: [session, argv]
+      properties:
+        session: { type: string }
+        argv:
+          type: array
+          minItems: 1
+          items: { type: string }
+        timeout_seconds: { type: [integer, 'null'], minimum: 1 }
+        background:
+          type: boolean
+          default: false
+          description: Start as a background job when true.
+    SessionOnlyRequest:
+      type: object
+      required: [session]
+      properties:
+        session: { type: string }
+    GitDiffRequest:
+      type: object
+      required: [session]
+      properties:
+        session: { type: string }
+        staged: { type: boolean, default: false }
+        path: { type: [string, 'null'] }
+        max_bytes: { type: [integer, 'null'], minimum: 1 }
+    GitStageRequest:
+      type: object
+      required: [session, paths]
+      properties:
+        session: { type: string }
+        paths:
+          type: array
+          minItems: 1
+          items: { type: string }
+    GitCommitRequest:
+      type: object
+      required: [session, message]
+      properties:
+        session: { type: string }
+        message: { type: string, minLength: 1 }
+    GitSyncRequest:
+      oneOf:
+        - type: object
+          required: [action, session]
+          properties:
+            action: { const: fetch }
+            session: { type: string }
+        - type: object
+          required: [action, session]
+          properties:
+            action: { const: pull }
+            session: { type: string }
+        - type: object
+          required: [action, session, remote, branch]
+          properties:
+            action: { const: push }
+            session: { type: string }
+            remote: { type: string }
+            branch: { type: string }
     FindWorkspacesRequest:
       type: object
       properties:

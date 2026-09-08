@@ -9,6 +9,7 @@ use axum::{
 use serde::Serialize;
 use tokio::net::TcpListener;
 
+mod agent_ops;
 mod approvals;
 mod audit;
 mod auth;
@@ -165,6 +166,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/v1/agent/sessions/complete",
             post(sessions::complete_session),
         )
+        .route("/v1/agent/files/browse", post(agent_ops::browse_files))
+        .route("/v1/agent/code/read", post(agent_ops::read_code))
+        .route("/v1/agent/code/search", post(agent_ops::search_code))
+        .route("/v1/agent/code/inspect", post(agent_ops::inspect_code))
+        .route("/v1/agent/code/edit", post(agent_ops::edit_code))
+        .route("/v1/agent/code/verification-plan", post(agent_ops::plan_verification))
+        .route("/v1/agent/commands/run", post(agent_ops::run_command))
+        .route("/v1/agent/git/status", post(agent_ops::git_status))
+        .route("/v1/agent/git/diff", post(agent_ops::git_diff))
+        .route("/v1/agent/git/stage", post(agent_ops::git_stage))
+        .route("/v1/agent/git/commit", post(agent_ops::git_commit))
+        .route("/v1/agent/git/sync", post(agent_ops::git_sync))
         .route("/v1/lsp/servers", get(lsp_status::language_servers))
         .route("/v1/lsp/definition", post(lsp::definition))
         .route("/v1/lsp/references", post(lsp::references))

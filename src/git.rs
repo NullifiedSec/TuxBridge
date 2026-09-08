@@ -7,7 +7,7 @@ use crate::{config::WorkspaceConfig, error::ApiError, state::AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct GitRequest {
-    workspace: String,
+    pub(crate) workspace: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -18,11 +18,11 @@ pub struct LogRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct DiffRequest {
-    workspace: String,
+    pub(crate) workspace: String,
     #[serde(default)]
-    staged: bool,
-    path: Option<String>,
-    max_bytes: Option<usize>,
+    pub(crate) staged: bool,
+    pub(crate) path: Option<String>,
+    pub(crate) max_bytes: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]

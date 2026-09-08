@@ -11,26 +11,26 @@ use crate::{config::WorkspaceConfig, error::ApiError, state::AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct GitActionRequest {
-    workspace: String,
+    pub(crate) workspace: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GitAddRequest {
-    workspace: String,
-    paths: Vec<String>,
+    pub(crate) workspace: String,
+    pub(crate) paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GitCommitRequest {
-    workspace: String,
-    message: String,
+    pub(crate) workspace: String,
+    pub(crate) message: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GitPushRequest {
-    workspace: String,
-    remote: String,
-    branch: String,
+    pub(crate) workspace: String,
+    pub(crate) remote: String,
+    pub(crate) branch: String,
 }
 
 #[derive(Debug, Serialize)]

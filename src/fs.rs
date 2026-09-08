@@ -21,9 +21,9 @@ const HARD_MAX_READ_BYTES: usize = 8_388_608;
 
 #[derive(Debug, Deserialize)]
 pub struct PathRequest {
-    workspace: String,
+    pub(crate) workspace: String,
     #[serde(default)]
-    path: String,
+    pub(crate) path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,11 +51,11 @@ pub struct ReadSpec {
 
 #[derive(Debug, Deserialize)]
 pub struct SearchRequest {
-    workspace: String,
+    pub(crate) workspace: String,
     #[serde(default)]
-    path: String,
-    query: String,
-    max_results: Option<usize>,
+    pub(crate) path: String,
+    pub(crate) query: String,
+    pub(crate) max_results: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]

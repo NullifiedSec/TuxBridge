@@ -21,11 +21,11 @@ const MAX_SCAN_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SYMBOLS: usize = 2_000;
 
 #[derive(Debug, Deserialize)]
-pub struct CodeContextRequest { workspace:String, path:String, start_line:Option<usize>, end_line:Option<usize>, context_before:Option<usize>, context_after:Option<usize>, max_bytes:Option<usize> }
+pub struct CodeContextRequest { pub(crate) workspace:String, pub(crate) path:String, pub(crate) start_line:Option<usize>, pub(crate) end_line:Option<usize>, pub(crate) context_before:Option<usize>, pub(crate) context_after:Option<usize>, pub(crate) max_bytes:Option<usize> }
 #[derive(Debug, Serialize)]
 pub struct CodeContextResponse { path:String, sha256:String, total_lines:usize, start_line:usize, end_line:usize, content:String, truncated:bool }
 #[derive(Debug, Deserialize)]
-pub struct CodeSymbolsRequest { workspace:String, path:String }
+pub struct CodeSymbolsRequest { pub(crate) workspace:String, pub(crate) path:String }
 #[derive(Debug, Serialize)]
 pub struct CodeSymbol { name:String, kind:String, line:usize, signature:String }
 #[derive(Debug, Serialize)]
@@ -39,10 +39,10 @@ pub struct CodeReferencesResponse { identifier:String, references:Vec<CodeRefere
 
 #[derive(Debug, Deserialize)]
 pub struct CodeEditPlanRequest {
-    workspace: String,
-    files: Vec<FileEditPlan>,
-    session_id: Option<String>,
-    #[serde(default)] dry_run: bool,
+    pub(crate) workspace: String,
+    pub(crate) files: Vec<FileEditPlan>,
+    pub(crate) session_id: Option<String>,
+    #[serde(default)] pub(crate) dry_run: bool,
 }
 #[derive(Debug, Deserialize)]
 pub struct FileEditPlan { path:String, expected_sha256:String, edits:Vec<CodeEdit> }

@@ -117,6 +117,16 @@ impl SessionStore {
         Ok(())
     }
 
+    pub async fn active_context(&self, session_ref: &str) -> Result<(String, String), ApiError> {
+        let sessions = self.inner.lock().await;
+        let key = resolve_key(&sessions, session_ref)?;
+        let session = sessions
+            .get(&key)
+            .ok_or_else(|| ApiError::NotFound(format!("coding session {session_ref:?} not found")))?;
+        ensure_active(session)?;
+        Ok((session.id.clone(), session.workspace.clone()))
+    }
+
     pub async fn workspace_for(&self, session_ref: &str) -> Result<String, ApiError> {
         let sessions = self.inner.lock().await;
         let key = resolve_key(&sessions, session_ref)?;
@@ -431,6 +441,10 @@ mod tests {
 
         let reopened = SessionStore::open(directory.path()).unwrap();
         assert_eq!(reopened.workspace_for(&session).await.unwrap(), "demo");
+        let suffix = session.rsplit("--").next().unwrap();
+        let (canonical, workspace) = reopened.active_context(suffix).await.unwrap();
+        assert_eq!(canonical, session);
+        assert_eq!(workspace, "demo");
         let sessions = reopened.inner.lock().await;
         let record = sessions.get(&session).unwrap();
         assert_eq!(record.summary.as_deref(), Some("Fix the persistent session flow"));

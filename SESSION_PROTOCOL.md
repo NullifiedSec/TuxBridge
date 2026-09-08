@@ -62,9 +62,11 @@ See `PERSISTENCE.md` for the on-disk format, atomicity rules, and state-director
 
 Session bootstrap, explicit task memory, todos, readable continuity references, and session persistence are implemented alongside the legacy workspace-oriented API so existing clients keep working while agent tools migrate to session-bound wrappers.
 
-Low-level filesystem, code, command, LSP, and Git endpoints still accept workspace arguments directly; those are internal/legacy surfaces until corresponding compact agent tools are added.
+The compact agent operational surface is now session-bound. After `selectWorkspace` or `chooseSession`, agent tools accept `session` and TuxBridge resolves the workspace server-side. The current operational tools are `browseFiles`, `readCode`, `searchCode`, `inspectCode`, `editCode`, `planVerification`, `runCommand`, `gitStatus`, `gitDiff`, `gitStage`, `gitCommit`, and `gitSync`. Successful tool responses echo the canonical readable session reference, and TuxBridge emits `agent.tool.started`, `agent.tool.completed`, or `agent.tool.failed` events with session provenance.
 
-Operations, approvals, jobs, and event history are not yet durable session children. They are the next control-plane layers to bind to the durable session spine.
+The old workspace-oriented filesystem, code, command, LSP, and Git endpoints remain available as internal/legacy primitives while clients migrate. `editCode` injects the session into the existing hash-guarded edit engine automatically, so real source edits capture rollback snapshots without relying on the agent to supply a separate session id.
+
+Operations, approvals, background-job ownership, and event history are not yet durable session children. They are the next control-plane layers to bind to the durable session spine.
 
 ## API docs
 
