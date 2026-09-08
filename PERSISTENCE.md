@@ -50,3 +50,13 @@ A missing snapshot blob does not erase the session. The session remains resumabl
 Every `session.json` includes `schema_version`. The current version is `1`. Unknown versions fail startup explicitly instead of being interpreted with incompatible assumptions.
 
 Future durable operations, approvals, and control-plane events should reuse the same TuxBridge state root. They do not need to use the exact session manifest format.
+
+## Recovery hardening
+
+Startup isolates a malformed or unsupported session instead of failing the whole daemon. The affected session directory is moved under `sessions/_quarantine/` and receives a `QUARANTINE_REASON.txt` file with the load failure. Healthy sessions continue loading normally.
+
+On startup, TuxBridge also garbage-collects snapshot blob files that are no longer referenced by the successfully loaded session manifest. Referenced rollback blobs are preserved and remain SHA-256 verified when read.
+
+These recovery behaviors are covered by regression tests for corrupt-manifest quarantine and orphan-snapshot cleanup.
+
+The session map still serializes a mutation while its manifest is synchronously committed. This is currently a bounded latency/throughput concern rather than a durability risk; changing the commit concurrency model is intentionally deferred until it can be done with explicit ordering tests rather than weakening atomic session semantics.

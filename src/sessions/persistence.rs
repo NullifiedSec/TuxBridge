@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -11,16 +11,17 @@ use tempfile::NamedTempFile;
 
 use crate::error::ApiError;
 
-use super::{
-    FileSnapshot, SessionBaseline, SessionRecord, SessionStatus, TodoItem, MAX_FILES_PER_SESSION,
-    MAX_SNAPSHOT_BYTES, MAX_TODOS,
-};
 use super::support::digest;
+use super::{
+    FileSnapshot, MAX_FILES_PER_SESSION, MAX_SNAPSHOT_BYTES, MAX_TODOS, SessionBaseline,
+    SessionRecord, SessionStatus, TodoItem,
+};
 
 const SESSION_SCHEMA_VERSION: u32 = 1;
 const SESSION_MANIFEST: &str = "session.json";
 const SESSIONS_DIR: &str = "sessions";
 const SNAPSHOTS_DIR: &str = "snapshots";
+const QUARANTINE_DIR: &str = "_quarantine";
 
 #[derive(Clone)]
 pub(super) struct SessionPersistence {
@@ -80,38 +81,92 @@ impl SessionPersistence {
             return Ok(HashMap::new());
         };
         let mut sessions = HashMap::new();
-        let entries = fs::read_dir(root.as_ref()).map_err(|error| {
+        for entry in fs::read_dir(root.as_ref()).map_err(|error| {
             format!(
                 "failed to read session state directory {}: {error}",
                 root.display()
             )
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|error| format!("failed to read persisted session: {error}"))?;
-            let file_type = entry
-                .file_type()
-                .map_err(|error| format!("failed to inspect persisted session: {error}"))?;
-            if !file_type.is_dir() {
+        })? {
+            let entry =
+                entry.map_err(|error| format!("failed to read persisted session: {error}"))?;
+            let file_type = entry.file_type().map_err(|error| {
+                format!(
+                    "failed to inspect persisted session {}: {error}",
+                    entry.path().display()
+                )
+            })?;
+            if !file_type.is_dir() || entry.file_name() == QUARANTINE_DIR {
                 continue;
             }
+            let name = entry.file_name().to_string_lossy().into_owned();
             let manifest_path = entry.path().join(SESSION_MANIFEST);
-            if !manifest_path.is_file() {
-                continue;
-            }
-            let manifest = read_manifest(&manifest_path)?;
-            let directory_name = entry.file_name().to_string_lossy().into_owned();
-            if manifest.id != directory_name {
-                return Err(format!(
-                    "persisted session id {:?} does not match directory {:?}",
-                    manifest.id, directory_name
-                ));
-            }
-            let record = manifest.into_record()?;
+            let loaded = read_manifest(&manifest_path).and_then(|manifest| {
+                if manifest.id != name {
+                    return Err(format!(
+                        "persisted session id {:?} does not match directory {:?}",
+                        manifest.id, name
+                    ));
+                }
+                manifest.into_record()
+            });
+            let record = match loaded {
+                Ok(record) => record,
+                Err(error) => {
+                    eprintln!("tuxbridge: quarantining persisted session {name:?}: {error}");
+                    quarantine_session(root, &entry.path(), &name, &error)?;
+                    continue;
+                }
+            };
             if sessions.insert(record.id.clone(), record).is_some() {
-                return Err(format!("duplicate persisted session {directory_name:?}"));
+                return Err(format!("duplicate persisted session {name:?}"));
             }
         }
+        self.garbage_collect_snapshots(&sessions)?;
         Ok(sessions)
+    }
+
+    fn garbage_collect_snapshots(
+        &self,
+        sessions: &HashMap<String, SessionRecord>,
+    ) -> Result<(), String> {
+        let Some(root) = self.root.as_ref() else {
+            return Ok(());
+        };
+        for (session_id, session) in sessions {
+            let directory = root.join(session_id).join(SNAPSHOTS_DIR);
+            if !directory.is_dir() {
+                continue;
+            }
+            let referenced = session
+                .files
+                .values()
+                .map(|snapshot| format!("{}.bin", snapshot.before_sha256))
+                .collect::<HashSet<_>>();
+            for entry in fs::read_dir(&directory)
+                .map_err(|error| format!("failed to scan {}: {error}", directory.display()))?
+            {
+                let entry =
+                    entry.map_err(|error| format!("failed to inspect snapshot: {error}"))?;
+                if !entry
+                    .file_type()
+                    .map_err(|error| error.to_string())?
+                    .is_file()
+                {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !referenced.contains(&name) {
+                    fs::remove_file(entry.path()).map_err(|error| {
+                        format!(
+                            "failed to remove orphan snapshot {}: {error}",
+                            entry.path().display()
+                        )
+                    })?;
+                }
+            }
+            sync_directory(&directory).map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     pub(super) fn save_session(&self, session: &SessionRecord) -> Result<(), ApiError> {
@@ -122,8 +177,9 @@ impl SessionPersistence {
         fs::create_dir_all(&directory).map_err(map_state_io)?;
         let manifest = PersistedSession::from_record(session);
         let mut temp = NamedTempFile::new_in(&directory).map_err(map_state_io)?;
-        serde_json::to_writer_pretty(temp.as_file_mut(), &manifest)
-            .map_err(|error| ApiError::Internal(format!("failed to serialize session state: {error}")))?;
+        serde_json::to_writer_pretty(temp.as_file_mut(), &manifest).map_err(|error| {
+            ApiError::Internal(format!("failed to serialize session state: {error}"))
+        })?;
         temp.write_all(b"\n").map_err(map_state_io)?;
         temp.as_file_mut().flush().map_err(map_state_io)?;
         temp.as_file().sync_all().map_err(map_state_io)?;
@@ -227,11 +283,9 @@ impl SessionPersistence {
             return false;
         }
         if self.root.is_none() {
-            return self
-                .memory_snapshots
-                .lock()
-                .ok()
-                .is_some_and(|snapshots| snapshots.contains_key(&snapshot_memory_key(session, sha256)));
+            return self.memory_snapshots.lock().ok().is_some_and(|snapshots| {
+                snapshots.contains_key(&snapshot_memory_key(session, sha256))
+            });
         }
         self.snapshot_path(session, sha256)
             .ok()
@@ -355,11 +409,58 @@ impl PersistedSession {
     }
 }
 
+fn quarantine_session(
+    root: &Path,
+    session_dir: &Path,
+    name: &str,
+    reason: &str,
+) -> Result<(), String> {
+    let quarantine = root.join(QUARANTINE_DIR);
+    fs::create_dir_all(&quarantine).map_err(|error| {
+        format!(
+            "failed to create quarantine directory {}: {error}",
+            quarantine.display()
+        )
+    })?;
+    let mut suffix = 0u64;
+    let target = loop {
+        let candidate = quarantine.join(format!("{name}-{}-{suffix}", std::process::id()));
+        if !candidate.exists() {
+            break candidate;
+        }
+        suffix += 1;
+    };
+    fs::rename(session_dir, &target).map_err(|error| {
+        format!(
+            "failed to quarantine corrupt session {}: {error}",
+            session_dir.display()
+        )
+    })?;
+    fs::write(
+        target.join("QUARANTINE_REASON.txt"),
+        format!(
+            "{reason}
+"
+        ),
+    )
+    .map_err(|error| format!("failed to record quarantine reason: {error}"))?;
+    sync_directory(&quarantine).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn read_manifest(path: &Path) -> Result<PersistedSession, String> {
-    let bytes = fs::read(path)
-        .map_err(|error| format!("failed to read persisted session {}: {error}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| format!("failed to parse persisted session {}: {error}", path.display()))
+    let bytes = fs::read(path).map_err(|error| {
+        format!(
+            "failed to read persisted session {}: {error}",
+            path.display()
+        )
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        format!(
+            "failed to parse persisted session {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn validate_session_component(session: &str) -> Result<(), ApiError> {
@@ -400,4 +501,73 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
 
 fn map_state_io(error: std::io::Error) -> ApiError {
     ApiError::Internal(format!("session persistence failed: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sessions::SessionStore;
+
+    #[test]
+    fn corrupt_manifest_is_quarantined_without_blocking_startup() {
+        let directory = tempfile::tempdir().unwrap();
+        let sessions = directory.path().join(SESSIONS_DIR);
+        let broken = sessions.join("demo--broken--abc12");
+        fs::create_dir_all(&broken).unwrap();
+        fs::write(broken.join(SESSION_MANIFEST), b"{ definitely not json").unwrap();
+
+        let persistence = SessionPersistence::open(directory.path()).unwrap();
+        let loaded = persistence.load_sessions().unwrap();
+        assert!(loaded.is_empty());
+
+        let quarantine = sessions.join(QUARANTINE_DIR);
+        let entries = fs::read_dir(&quarantine)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        let quarantined = entries[0].path();
+        assert!(quarantined.join("QUARANTINE_REASON.txt").is_file());
+        assert!(!broken.exists());
+    }
+
+    #[tokio::test]
+    async fn reopen_removes_only_unreferenced_snapshot_blobs() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::open(directory.path()).unwrap();
+        let session = store
+            .create("demo", "GC snapshots".into(), None)
+            .await
+            .unwrap();
+        store
+            .capture_change(&session, "demo", "src/lib.rs", b"before", b"after")
+            .await
+            .unwrap();
+
+        let sessions = store.inner.lock().await;
+        let record = sessions.get(&session).unwrap();
+        let referenced = record
+            .files
+            .get("src/lib.rs")
+            .unwrap()
+            .before_sha256
+            .clone();
+        drop(sessions);
+        drop(store);
+
+        let snapshot_dir = directory
+            .path()
+            .join(SESSIONS_DIR)
+            .join(&session)
+            .join(SNAPSHOTS_DIR);
+        let orphan = snapshot_dir.join(format!("{}.bin", "0".repeat(64)));
+        fs::write(&orphan, b"orphan").unwrap();
+
+        let reopened = SessionStore::open(directory.path()).unwrap();
+        assert!(!orphan.exists());
+        assert_eq!(
+            reopened.read_snapshot(&session, &referenced).unwrap(),
+            b"before"
+        );
+    }
 }
