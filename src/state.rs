@@ -1,6 +1,10 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    env,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use tokio::sync::Semaphore;
@@ -47,12 +51,16 @@ impl AppState {
                 roles: Arc::from(principal.roles),
             })
             .collect::<Vec<_>>();
-        let role_policy = RolePolicy::embedded()
-            .map_err(|error| ConfigError::Invalid(format!("embedded role policy is invalid: {error}")))?;
+        let role_policy = RolePolicy::embedded().map_err(|error| {
+            ConfigError::Invalid(format!("embedded role policy is invalid: {error}"))
+        })?;
         let jobs = JobStore::new(
             config.limits.max_jobs,
             config.limits.job_retention_seconds,
         );
+        let sessions = SessionStore::open(&session_state_root()).map_err(|error| {
+            ConfigError::Invalid(format!("failed to open durable session state: {error}"))
+        })?;
         let request_gate = Arc::new(Semaphore::new(config.limits.max_in_flight));
 
         Ok(Self {
@@ -60,7 +68,7 @@ impl AppState {
             jobs,
             audit: AuditStore::default(),
             events: EventHub::default(),
-            sessions: SessionStore::default(),
+            sessions,
             approvals: ApprovalStore::default(),
             request_gate,
             principals: Arc::from(principals),
@@ -73,4 +81,21 @@ impl AppState {
         let sequence = self.request_sequence.fetch_add(1, Ordering::Relaxed) + 1;
         format!("tb-{sequence:016x}")
     }
+}
+
+fn session_state_root() -> PathBuf {
+    if let Some(path) = env::var_os("TUXBRIDGE_STATE_DIR") {
+        return PathBuf::from(path);
+    }
+    let system_state = PathBuf::from("/var/lib/tuxbridge");
+    if system_state.is_dir() {
+        return system_state;
+    }
+    env::var_os("XDG_STATE_HOME")
+        .map(|path| PathBuf::from(path).join("tuxbridge"))
+        .or_else(|| {
+            env::var_os("HOME")
+                .map(|path| PathBuf::from(path).join(".local").join("state").join("tuxbridge"))
+        })
+        .unwrap_or(system_state)
 }
