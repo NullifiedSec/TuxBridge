@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    path::Path,
     sync::{Arc, atomic::AtomicU64},
 };
 
@@ -10,6 +11,7 @@ use crate::config::Capabilities;
 
 mod agent;
 mod legacy;
+mod persistence;
 mod store;
 mod support;
 
@@ -27,12 +29,37 @@ const MAX_PLAN_BYTES: usize = 64 * 1024;
 const MAX_TODOS: usize = 256;
 const MAX_TODO_BYTES: usize = 2 * 1024;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SessionStore {
     inner: Arc<Mutex<HashMap<String, SessionRecord>>>,
     next: Arc<AtomicU64>,
+    persistence: persistence::SessionPersistence,
 }
 
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            next: Arc::new(AtomicU64::new(0)),
+            persistence: persistence::SessionPersistence::disabled(),
+        }
+    }
+}
+
+impl SessionStore {
+    pub fn open(state_root: &Path) -> Result<Self, String> {
+        let persistence = persistence::SessionPersistence::open(state_root)?;
+        let sessions = persistence.load_sessions()?;
+        let next = sessions.len() as u64;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(sessions)),
+            next: Arc::new(AtomicU64::new(next)),
+            persistence,
+        })
+    }
+}
+
+#[derive(Clone)]
 struct SessionRecord {
     id: String,
     workspace: String,
@@ -50,13 +77,14 @@ struct SessionRecord {
     bytes: usize,
 }
 
+#[derive(Clone)]
 struct FileSnapshot {
-    before: Vec<u8>,
     before_sha256: String,
     after_sha256: String,
+    before_bytes: usize,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum SessionStatus {
     Active,
@@ -64,7 +92,7 @@ enum SessionStatus {
     RolledBack,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionBaseline {
     branch: Option<String>,
     head: Option<String>,
@@ -72,7 +100,7 @@ pub struct SessionBaseline {
     changes: Vec<SessionBaselineChange>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionBaselineChange {
     index: char,
     worktree: char,
@@ -89,7 +117,7 @@ pub enum TodoStatus {
     Skipped,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TodoItem {
     id: String,
     text: String,
