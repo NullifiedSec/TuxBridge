@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Component, Path, PathBuf},
