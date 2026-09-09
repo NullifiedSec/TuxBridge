@@ -230,7 +230,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/EditCodeRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AgentToolResponse' }
+        '200': { $ref: '#/components/responses/OperationResponse' }
   /v1/agent/code/verification-plan:
     post:
       tags: [Agent tools]
@@ -255,7 +255,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/RunCommandRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AgentToolResponse' }
+        '200': { $ref: '#/components/responses/OperationResponse' }
   /v1/agent/git/status:
     post:
       tags: [Agent tools]
@@ -291,7 +291,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/GitStageRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AgentToolResponse' }
+        '200': { $ref: '#/components/responses/OperationResponse' }
   /v1/agent/git/commit:
     post:
       tags: [Agent tools]
@@ -303,7 +303,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/GitCommitRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AgentToolResponse' }
+        '200': { $ref: '#/components/responses/OperationResponse' }
   /v1/agent/git/sync:
     post:
       tags: [Agent tools]
@@ -315,7 +315,23 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/GitSyncRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AgentToolResponse' }
+        '200': { $ref: '#/components/responses/OperationResponse' }
+
+  /v1/agent/operations/wait:
+    post:
+      tags: [Agent tools]
+      operationId: waitForOperation
+      summary: Wait briefly for a session operation to reach a terminal state.
+      description: >-
+        Use after a tool returns pending_approval or executing. The server performs
+        bounded long polling only; callers may retry safely with the same operation id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WaitOperationRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/OperationResponse' }
 
 components:
   responses:
@@ -329,11 +345,38 @@ components:
             properties:
               session: { type: string }
               result: {}
+    OperationResponse:
+      description: Durable frozen operation state.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Operation' }
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    WaitOperationRequest:
+      type: object
+      required: [session, operation_id]
+      properties:
+        session: { type: string }
+        operation_id: { type: string }
+        timeout_ms: { type: [integer, null], minimum: 0, maximum: 25000 }
+    Operation:
+      type: object
+      required: [id, session, workspace, tool, args, policy, status, created_at_unix_ms, updated_at_unix_ms]
+      properties:
+        id: { type: string }
+        session: { type: string }
+        workspace: { type: string }
+        tool: { type: string }
+        args: {}
+        policy: { type: string, enum: [automatic, confirm, blocked] }
+        status: { type: string, enum: [pending_approval, executing, completed, failed, denied, blocked] }
+        created_at_unix_ms: { type: integer }
+        updated_at_unix_ms: { type: integer }
+        result: {}
+        error: { type: [string, null] }
     BrowseFilesRequest:
       type: object
       required: [session]

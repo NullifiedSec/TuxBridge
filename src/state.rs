@@ -15,6 +15,7 @@ use crate::{
     command::JobStore,
     config::{AuthRole, Config, ConfigError},
     events::EventHub,
+    operations::OperationStore,
     role_policy::RolePolicy,
     sessions::SessionStore,
 };
@@ -34,6 +35,7 @@ pub struct AppState {
     pub events: EventHub,
     pub sessions: SessionStore,
     pub approvals: ApprovalStore,
+    pub operations: OperationStore,
     pub request_gate: Arc<Semaphore>,
     pub principals: Arc<[PrincipalCredential]>,
     pub role_policy: RolePolicy,
@@ -58,8 +60,12 @@ impl AppState {
             config.limits.max_jobs,
             config.limits.job_retention_seconds,
         );
-        let sessions = SessionStore::open(&session_state_root()).map_err(|error| {
+        let state_root = session_state_root();
+        let sessions = SessionStore::open(&state_root).map_err(|error| {
             ConfigError::Invalid(format!("failed to open durable session state: {error}"))
+        })?;
+        let operations = OperationStore::open(&state_root).map_err(|error| {
+            ConfigError::Invalid(format!("failed to open durable operation state: {error}"))
         })?;
         let request_gate = Arc::new(Semaphore::new(config.limits.max_in_flight));
 
@@ -70,6 +76,7 @@ impl AppState {
             events: EventHub::default(),
             sessions,
             approvals: ApprovalStore::default(),
+            operations,
             request_gate,
             principals: Arc::from(principals),
             role_policy,

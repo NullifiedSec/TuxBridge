@@ -31,6 +31,7 @@ mod hardening;
 mod lsp;
 mod lsp_status;
 mod mutation;
+mod operations;
 mod project;
 mod raw_command;
 mod repo_map;
@@ -178,6 +179,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/agent/git/stage", post(agent_ops::git_stage))
         .route("/v1/agent/git/commit", post(agent_ops::git_commit))
         .route("/v1/agent/git/sync", post(agent_ops::git_sync))
+        .route("/v1/agent/operations/wait", post(operations::wait_for_operation))
+        .route("/v1/operations", get(operations::list_operations))
+        .route("/v1/operations/{id}/approve", post(operations::approve))
+        .route("/v1/operations/{id}/deny", post(operations::deny))
         .route("/v1/lsp/servers", get(lsp_status::language_servers))
         .route("/v1/lsp/definition", post(lsp::definition))
         .route("/v1/lsp/references", post(lsp::references))

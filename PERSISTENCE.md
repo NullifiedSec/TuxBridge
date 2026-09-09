@@ -60,3 +60,7 @@ On startup, TuxBridge also garbage-collects snapshot blob files that are no long
 These recovery behaviors are covered by regression tests for corrupt-manifest quarantine and orphan-snapshot cleanup.
 
 The session map still serializes a mutation while its manifest is synchronously committed. This is currently a bounded latency/throughput concern rather than a durability risk; changing the commit concurrency model is intentionally deferred until it can be done with explicit ordering tests rather than weakening atomic session semantics.
+
+## Operations
+
+Agent side effects are persisted separately under `operations/<operation-id>.json`. Frozen operation arguments survive restart. Operations found in `executing` state after restart are marked failed/uncertain instead of replayed automatically. See `OPERATIONS.md`.

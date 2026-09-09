@@ -44,9 +44,9 @@ pub struct CodeEditPlanRequest {
     pub(crate) session_id: Option<String>,
     #[serde(default)] pub(crate) dry_run: bool,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEditPlan { path:String, expected_sha256:String, edits:Vec<CodeEdit> }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag="kind",rename_all="snake_case")]
 pub enum CodeEdit { ReplaceExact{old:String,new:String}, ReplaceLines{start_line:usize,end_line:usize,new:String}, InsertBefore{line:usize,new:String}, InsertAfter{line:usize,new:String} }
 #[derive(Debug, Serialize)]

@@ -2,7 +2,8 @@ use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    code_tools, command, error::ApiError, fs, git, git_mutation, state::AppState, verification,
+    code_tools, command, error::ApiError, fs, git, git_mutation,
+    operations::{OperationRecord, OperationStatus}, state::AppState, verification,
 };
 
 #[derive(Debug, Serialize)]
@@ -11,13 +12,13 @@ pub struct AgentToolResponse<T: Serialize> {
     result: T,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowseFilesRequest {
     session: String,
     #[serde(default)]
     path: String,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadCodeRequest {
     session: String,
     path: String,
@@ -27,7 +28,7 @@ pub struct ReadCodeRequest {
     context_after: Option<usize>,
     max_bytes: Option<usize>,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchCodeRequest {
     session: String,
     #[serde(default)]
@@ -35,25 +36,25 @@ pub struct SearchCodeRequest {
     query: String,
     max_results: Option<usize>,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InspectCodeRequest {
     session: String,
     path: String,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditCodeRequest {
     session: String,
     files: Vec<code_tools::FileEditPlan>,
     #[serde(default)]
     dry_run: bool,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanVerificationRequest {
     session: String,
     #[serde(default)]
     changed_paths: Vec<String>,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunCommandRequest {
     session: String,
     argv: Vec<String>,
@@ -61,11 +62,11 @@ pub struct RunCommandRequest {
     #[serde(default)]
     background: bool,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionOnlyRequest {
     session: String,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitDiffRequest {
     session: String,
     #[serde(default)]
@@ -73,18 +74,18 @@ pub struct GitDiffRequest {
     path: Option<String>,
     max_bytes: Option<usize>,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitStageRequest {
     session: String,
     paths: Vec<String>,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentGitCommitRequest {
     session: String,
     message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum GitSyncRequest {
     Fetch {
@@ -154,6 +155,130 @@ async fn finish<T: Serialize>(
             Err(error)
         }
     }
+}
+
+async fn submit_operation<T: Serialize>(
+    state: &AppState,
+    reference: &str,
+    tool: &str,
+    request: &T,
+) -> Result<Json<OperationRecord>, ApiError> {
+    let (session, workspace) = state.sessions.active_context(reference).await?;
+    let args = serde_json::to_value(request)
+        .map_err(|e| ApiError::Internal(format!("failed to freeze operation arguments: {e}")))?;
+    let policy = state.config.approvals.agent_policy(tool);
+    let record = state.operations.create(
+        session.clone(), workspace.clone(), tool.into(), args, policy,
+    ).await?;
+    state.events.emit(
+        "operation.requested", Some(&workspace), format!("{tool} requested in {session}"),
+        serde_json::json!({"session":session,"operation_id":record.id.clone(),"tool":tool,"policy":policy,"status":record.status}),
+    ).await;
+    if record.status != OperationStatus::Executing {
+        return Ok(Json(record));
+    }
+    let outcome = execute_frozen(state, &record).await;
+    let final_record = state.operations.finish(&record.id, outcome).await?;
+    state.events.emit(
+        "operation.finished", Some(&workspace), format!("{tool} finished as {:?}", final_record.status),
+        serde_json::json!({"session":final_record.session.clone(),"operation_id":final_record.id.clone(),"tool":tool,"status":final_record.status}),
+    ).await;
+    Ok(Json(final_record))
+}
+pub async fn execute_frozen(
+    state: &AppState,
+    operation: &OperationRecord,
+) -> Result<serde_json::Value, ApiError> {
+    match operation.tool.as_str() {
+        "editCode" => {
+            let req: EditCodeRequest = serde_json::from_value(operation.args.clone())
+                .map_err(|e| ApiError::Internal(format!("invalid frozen editCode args: {e}")))?;
+            let result = code_tools::code_edit_plan(
+                State(state.clone()),
+                Json(code_tools::CodeEditPlanRequest {
+                    workspace: operation.workspace.clone(),
+                    files: req.files,
+                    session_id: Some(operation.session.clone()),
+                    dry_run: req.dry_run,
+                }),
+            ).await?;
+            serde_json::to_value(result.0).map_err(|e| ApiError::Internal(e.to_string()))
+        }
+        "runCommand" => execute_frozen_command(state, operation).await,
+        "gitStage" => execute_frozen_stage(state, operation).await,
+        "gitCommit" => execute_frozen_commit(state, operation).await,
+        "gitSync.fetch" | "gitSync.pull" | "gitSync.push" => {
+            execute_frozen_sync(state, operation).await
+        }
+        tool => Err(ApiError::Internal(format!("unsupported frozen operation tool {tool:?}"))),
+    }
+}
+async fn execute_frozen_command(
+    state: &AppState,
+    operation: &OperationRecord,
+) -> Result<serde_json::Value, ApiError> {
+    let req: RunCommandRequest = serde_json::from_value(operation.args.clone())
+        .map_err(|e| ApiError::Internal(format!("invalid frozen runCommand args: {e}")))?;
+    let request = command::CommandRequest {
+        workspace: operation.workspace.clone(),
+        argv: req.argv,
+        timeout_seconds: req.timeout_seconds,
+    };
+    if req.background {
+        let Json(value) = command::start_command(State(state.clone()), Json(request)).await?;
+        serde_json::to_value(value).map_err(|e| ApiError::Internal(e.to_string()))
+    } else {
+        let Json(value) = command::run_command(State(state.clone()), Json(request)).await?;
+        serde_json::to_value(value).map_err(|e| ApiError::Internal(e.to_string()))
+    }
+}
+
+async fn execute_frozen_stage(
+    state: &AppState,
+    operation: &OperationRecord,
+) -> Result<serde_json::Value, ApiError> {
+    let req: GitStageRequest = serde_json::from_value(operation.args.clone())
+        .map_err(|e| ApiError::Internal(format!("invalid frozen gitStage args: {e}")))?;
+    let Json(value) = git_mutation::git_add(
+        State(state.clone()),
+        Json(git_mutation::GitAddRequest { workspace: operation.workspace.clone(), paths: req.paths }),
+    ).await?;
+    serde_json::to_value(value).map_err(|e| ApiError::Internal(e.to_string()))
+}
+async fn execute_frozen_commit(
+    state: &AppState,
+    operation: &OperationRecord,
+) -> Result<serde_json::Value, ApiError> {
+    let req: AgentGitCommitRequest = serde_json::from_value(operation.args.clone())
+        .map_err(|e| ApiError::Internal(format!("invalid frozen gitCommit args: {e}")))?;
+    let Json(value) = git_mutation::git_commit(
+        State(state.clone()),
+        Json(git_mutation::GitCommitRequest {
+            workspace: operation.workspace.clone(),
+            message: req.message,
+        }),
+    ).await?;
+    serde_json::to_value(value).map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+async fn execute_frozen_sync(
+    state: &AppState,
+    operation: &OperationRecord,
+) -> Result<serde_json::Value, ApiError> {
+    let req: GitSyncRequest = serde_json::from_value(operation.args.clone())
+        .map_err(|e| ApiError::Internal(format!("invalid frozen gitSync args: {e}")))?;
+    let result = match req {
+        GitSyncRequest::Fetch { .. } => git_mutation::git_fetch(
+            State(state.clone()), Json(git_mutation::GitActionRequest { workspace: operation.workspace.clone() }),
+        ).await?,
+        GitSyncRequest::Pull { .. } => git_mutation::git_pull(
+            State(state.clone()), Json(git_mutation::GitActionRequest { workspace: operation.workspace.clone() }),
+        ).await?,
+        GitSyncRequest::Push { remote, branch, .. } => git_mutation::git_push(
+            State(state.clone()), Json(git_mutation::GitPushRequest { workspace: operation.workspace.clone(), remote, branch }),
+        ).await?,
+    };
+    serde_json::to_value(result.0).map_err(|e| ApiError::Internal(e.to_string()))
 }
 
 pub async fn browse_files(
@@ -230,19 +355,9 @@ pub async fn inspect_code(
 pub async fn edit_code(
     State(state): State<AppState>,
     Json(req): Json<EditCodeRequest>,
-) -> Result<Json<AgentToolResponse<code_tools::CodeEditPlanResponse>>, ApiError> {
-    let (session, workspace) = context(&state, &req.session, "editCode").await?;
-    let result = code_tools::code_edit_plan(
-        State(state.clone()),
-        Json(code_tools::CodeEditPlanRequest {
-            workspace: workspace.clone(),
-            files: req.files,
-            session_id: Some(session.clone()),
-            dry_run: req.dry_run,
-        }),
-    )
-    .await;
-    finish(&state, session, &workspace, "editCode", result).await
+) -> Result<Json<OperationRecord>, ApiError> {
+    let session = req.session.clone();
+    submit_operation(&state, &session, "editCode", &req).await
 }
 
 pub async fn plan_verification(
@@ -264,31 +379,9 @@ pub async fn plan_verification(
 pub async fn run_command(
     State(state): State<AppState>,
     Json(req): Json<RunCommandRequest>,
-) -> Result<Json<AgentToolResponse<serde_json::Value>>, ApiError> {
-    let (session, workspace) = context(&state, &req.session, "runCommand").await?;
-    let request = command::CommandRequest {
-        workspace: workspace.clone(),
-        argv: req.argv,
-        timeout_seconds: req.timeout_seconds,
-    };
-    let result = if req.background {
-        command::start_command(State(state.clone()), Json(request))
-            .await
-            .and_then(|Json(value)| {
-                serde_json::to_value(value)
-                    .map(Json)
-                    .map_err(|e| ApiError::Internal(e.to_string()))
-            })
-    } else {
-        command::run_command(State(state.clone()), Json(request))
-            .await
-            .and_then(|Json(value)| {
-                serde_json::to_value(value)
-                    .map(Json)
-                    .map_err(|e| ApiError::Internal(e.to_string()))
-            })
-    };
-    finish(&state, session, &workspace, "runCommand", result).await
+) -> Result<Json<OperationRecord>, ApiError> {
+    let session = req.session.clone();
+    submit_operation(&state, &session, "runCommand", &req).await
 }
 
 pub async fn git_status(
@@ -327,75 +420,27 @@ pub async fn git_diff(
 pub async fn git_stage(
     State(state): State<AppState>,
     Json(req): Json<GitStageRequest>,
-) -> Result<Json<AgentToolResponse<git_mutation::GitMutationResponse>>, ApiError> {
-    let (session, workspace) = context(&state, &req.session, "gitStage").await?;
-    let result = git_mutation::git_add(
-        State(state.clone()),
-        Json(git_mutation::GitAddRequest {
-            workspace: workspace.clone(),
-            paths: req.paths,
-        }),
-    )
-    .await;
-    finish(&state, session, &workspace, "gitStage", result).await
+) -> Result<Json<OperationRecord>, ApiError> {
+    let session = req.session.clone();
+    submit_operation(&state, &session, "gitStage", &req).await
 }
 
 pub async fn git_commit(
     State(state): State<AppState>,
     Json(req): Json<AgentGitCommitRequest>,
-) -> Result<Json<AgentToolResponse<git_mutation::GitMutationResponse>>, ApiError> {
-    let (session, workspace) = context(&state, &req.session, "gitCommit").await?;
-    let result = git_mutation::git_commit(
-        State(state.clone()),
-        Json(git_mutation::GitCommitRequest {
-            workspace: workspace.clone(),
-            message: req.message,
-        }),
-    )
-    .await;
-    finish(&state, session, &workspace, "gitCommit", result).await
+) -> Result<Json<OperationRecord>, ApiError> {
+    let session = req.session.clone();
+    submit_operation(&state, &session, "gitCommit", &req).await
 }
 
 pub async fn git_sync(
     State(state): State<AppState>,
     Json(req): Json<GitSyncRequest>,
-) -> Result<Json<AgentToolResponse<git_mutation::GitMutationResponse>>, ApiError> {
-    let reference = match &req {
-        GitSyncRequest::Fetch { session }
-        | GitSyncRequest::Pull { session }
-        | GitSyncRequest::Push { session, .. } => session,
+) -> Result<Json<OperationRecord>, ApiError> {
+    let (session, tool) = match &req {
+        GitSyncRequest::Fetch { session } => (session.clone(), "gitSync.fetch"),
+        GitSyncRequest::Pull { session } => (session.clone(), "gitSync.pull"),
+        GitSyncRequest::Push { session, .. } => (session.clone(), "gitSync.push"),
     };
-    let (session, workspace) = context(&state, reference, "gitSync").await?;
-    let result = match req {
-        GitSyncRequest::Fetch { .. } => {
-            git_mutation::git_fetch(
-                State(state.clone()),
-                Json(git_mutation::GitActionRequest {
-                    workspace: workspace.clone(),
-                }),
-            )
-            .await
-        }
-        GitSyncRequest::Pull { .. } => {
-            git_mutation::git_pull(
-                State(state.clone()),
-                Json(git_mutation::GitActionRequest {
-                    workspace: workspace.clone(),
-                }),
-            )
-            .await
-        }
-        GitSyncRequest::Push { remote, branch, .. } => {
-            git_mutation::git_push(
-                State(state.clone()),
-                Json(git_mutation::GitPushRequest {
-                    workspace: workspace.clone(),
-                    remote,
-                    branch,
-                }),
-            )
-            .await
-        }
-    };
-    finish(&state, session, &workspace, "gitSync", result).await
+    submit_operation(&state, &session, tool, &req).await
 }

@@ -66,7 +66,9 @@ The compact agent operational surface is now session-bound. After `selectWorkspa
 
 The old workspace-oriented filesystem, code, command, LSP, and Git endpoints remain available as internal/legacy primitives while clients migrate. `editCode` injects the session into the existing hash-guarded edit engine automatically, so real source edits capture rollback snapshots without relying on the agent to supply a separate session id.
 
-Operations, approvals, background-job ownership, and event history are not yet durable session children. They are the next control-plane layers to bind to the durable session spine.
+Side-effecting agent tools are now represented as durable frozen operations. Automatic operations execute immediately; confirm operations wait for exact-operation approval; blocked operations never execute. Agents resume pending work with `waitForOperation`. See `OPERATIONS.md`.
+
+Background-job ownership and long-term event history are not yet durable session children.
 
 ## API docs
 
